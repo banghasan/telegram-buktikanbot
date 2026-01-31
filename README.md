@@ -52,6 +52,27 @@ Keterangan variabel:
 cargo run
 ```
 
+## Perintah Bot (Private)
+- `/start`: info bot.
+- `/ping`: cek response time.
+- `/ver`, `/versi`, `/version`: info versi aplikasi.
+
+## Versioning
+
+Cek versi saat ini:
+
+```bash
+./scripts/version_dump.sh
+```
+
+Naikkan versi:
+
+```bash
+./scripts/version_bump.sh major
+./scripts/version_bump.sh minor
+./scripts/version_bump.sh patch
+```
+
 ## Cara Compile (Build)
 
 Build release:

@@ -248,8 +248,7 @@ async fn on_text(
         let _ = bot.delete_message(msg.chat.id, msg.id).await;
 
         if !is_correct {
-            let _ = bot.ban_chat_member(msg.chat.id, user.id).await;
-            log_user_event_by_ids(&config, user.id, msg.chat.id, "captcha wrong, user banned");
+            log_user_event_by_ids(&config, user.id, msg.chat.id, "captcha wrong");
         } else {
             log_user_event_by_ids(&config, user.id, msg.chat.id, "captcha verified");
         }
@@ -289,6 +288,23 @@ async fn on_text(
                 .await?;
             return Ok(());
         }
+
+        if is_version_command(command) {
+            let version = env!("CARGO_PKG_VERSION");
+            let text = format!(
+                "📦 *Version*\nApp: `{}`\nSource: [github](https://github.com/banghasan/telegram-buktikanbot)\nGroup: @botindonesia",
+                version
+            );
+            if let Err(err) = bot
+                .send_message(msg.chat.id, text)
+                .parse_mode(ParseMode::MarkdownV2)
+                .disable_web_page_preview(true)
+                .await
+            {
+                eprintln!("failed to send version response: {err}");
+            }
+            return Ok(());
+        }
     }
 
     Ok(())
@@ -322,6 +338,12 @@ fn is_command(input: &str, cmd: &str) -> bool {
     let lowered = input.trim().to_ascii_lowercase();
     let cmd = format!("/{}", cmd);
     lowered == cmd || lowered.starts_with(&(cmd + "@"))
+}
+
+fn is_version_command(input: &str) -> bool {
+    let lowered = input.trim().to_ascii_lowercase();
+    let cmd = lowered.split('@').next().unwrap_or(&lowered);
+    matches!(cmd, "/ver" | "/versi" | "/version")
 }
 
 fn log_message(config: &Config, msg: &Message) {
