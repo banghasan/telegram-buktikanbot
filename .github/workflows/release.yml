@@ -1,0 +1,133 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Override version (e.g. 1.2.3). Leave empty to use Cargo.toml"
+        required: false
+      notes:
+        description: "Release notes (optional)"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  resolve-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION=$(rg -m1 '^version\s*=' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: resolve-version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            arch: amd64
+            package: tar
+            use_cross: false
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            arch: arm64
+            package: tar
+            use_cross: true
+          - os: macos-13
+            target: x86_64-apple-darwin
+            arch: amd64
+            package: tar
+            use_cross: false
+          - os: macos-14
+            target: aarch64-apple-darwin
+            arch: arm64
+            package: tar
+            use_cross: false
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            arch: amd64
+            package: zip
+            use_cross: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross (Linux ARM64)
+        if: ${{ matrix.use_cross }}
+        run: cargo install cross --locked
+
+      - name: Build (release)
+        shell: bash
+        run: |
+          if [ "${{ matrix.use_cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }}
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
+
+      - name: Package artifact
+        shell: bash
+        run: |
+          name="buktikanbot-${{ needs.resolve-version.outputs.version }}-${{ matrix.target }}"
+          mkdir -p dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp "target/${{ matrix.target }}/release/telegram-buktikanbot.exe" "dist/buktikanbot.exe"
+            powershell -Command "Compress-Archive -Path dist/buktikanbot.exe -DestinationPath ${name}.zip"
+          else
+            cp "target/${{ matrix.target }}/release/telegram-buktikanbot" "dist/buktikanbot"
+            tar -czf "${name}.tar.gz" -C dist buktikanbot
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            buktikanbot-${{ needs.resolve-version.outputs.version }}-${{ matrix.target }}.tar.gz
+            buktikanbot-${{ needs.resolve-version.outputs.version }}-${{ matrix.target }}.zip
+
+  release:
+    needs: [resolve-version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Create Git tag
+        run: |
+          git tag "v${{ needs.resolve-version.outputs.version }}"
+          git push origin "v${{ needs.resolve-version.outputs.version }}"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.resolve-version.outputs.version }}
+          name: v${{ needs.resolve-version.outputs.version }}
+          body: ${{ inputs.notes }}
+          generate_release_notes: true
+          files: dist/**/buktikanbot-${{ needs.resolve-version.outputs.version }}-*.*

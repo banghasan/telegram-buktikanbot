@@ -93,6 +93,27 @@ Jalankan binary hasil build:
 ./target/release/telegram-buktikanbot
 ```
 
+## Menjalankan dari Release
+
+1) Unduh file release sesuai OS/arsitektur:
+   - `buktikanbot-<versi>-x86_64-unknown-linux-gnu.tar.gz`
+   - `buktikanbot-<versi>-aarch64-unknown-linux-gnu.tar.gz`
+   - `buktikanbot-<versi>-x86_64-apple-darwin.tar.gz`
+   - `buktikanbot-<versi>-aarch64-apple-darwin.tar.gz`
+   - `buktikanbot-<versi>-x86_64-pc-windows-msvc.zip`
+
+2) Ekstrak dan jalankan:
+   - Linux/macOS:
+     ```bash
+     tar -xzf buktikanbot-<versi>-<target>.tar.gz
+     ./buktikanbot
+     ```
+   - Windows (PowerShell):
+     ```powershell
+     Expand-Archive -Path buktikanbot-<versi>-x86_64-pc-windows-msvc.zip -DestinationPath .
+     .\buktikanbot.exe
+     ```
+
 ## Cara Kerja Singkat
 1. Bot mendeteksi user baru yang masuk grup.
 2. Bot mengirim gambar CAPTCHA.
@@ -103,3 +124,6 @@ Jalankan binary hasil build:
 ## Catatan
 - State verifikasi disimpan di memori. Jika bot restart, state pending akan hilang.
 - Untuk keamanan, jangan commit file `.env` ke repo.
+
+## Credit
+Dibuat oleh bangHasan. Diskusi dan support di grup `@botindonesia`.
