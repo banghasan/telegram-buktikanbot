@@ -80,11 +80,7 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         });
     }
 
-    Dispatcher::builder(bot, handler)
-        .enable_ctrlc_handler()
-        .build()
-        .dispatch()
-        .await;
+    Dispatcher::builder(bot, handler).build().dispatch().await;
     Ok(())
 }
 

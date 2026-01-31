@@ -47,8 +47,7 @@ jobs:
             target: aarch64-unknown-linux-gnu
             arch: arm64
             package: tar
-            use_cross: false
-            needs_apt: true
+            use_cross: true
           - os: macos-15-intel
             target: x86_64-apple-darwin
             arch: amd64
@@ -78,17 +77,18 @@ jobs:
         with:
           shared-key: ${{ matrix.os }}-${{ matrix.target }}
 
-      - name: Install Linux ARM64 deps
-        if: ${{ matrix.needs_apt }}
-        run: |
-          sudo dpkg --add-architecture arm64
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu pkg-config libssl-dev:arm64
+      - name: Install cross (Linux ARM64)
+        if: ${{ matrix.use_cross }}
+        run: cargo install cross --locked
 
       - name: Build (release)
         shell: bash
         run: |
-          cargo build --release --target ${{ matrix.target }}
+          if [ "${{ matrix.use_cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }}
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
 
       - name: Package artifact
         shell: bash
