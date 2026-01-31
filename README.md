@@ -13,11 +13,31 @@ dan pesan jawaban user.
 - Jawaban salah / timeout: kick user dari grup.
 
 ## Persyaratan
-- Rust (edisi 2024) dan Cargo.
 - Bot Telegram yang sudah dibuat lewat BotFather.
 - Bot jadi admin grup dengan izin:
   - Delete messages
   - Ban users
+
+## Menjalankan dari Release
+
+1) Unduh file release sesuai OS/arsitektur:
+   - `buktikanbot-<versi>-x86_64-unknown-linux-gnu.tar.gz`
+   - `buktikanbot-<versi>-aarch64-unknown-linux-gnu.tar.gz`
+   - `buktikanbot-<versi>-x86_64-apple-darwin.tar.gz`
+   - `buktikanbot-<versi>-aarch64-apple-darwin.tar.gz`
+   - `buktikanbot-<versi>-x86_64-pc-windows-msvc.zip`
+
+2) Ekstrak dan jalankan:
+   - Linux/macOS:
+     ```bash
+     tar -xzf buktikanbot-<versi>-<target>.tar.gz
+     ./buktikanbot
+     ```
+   - Windows (PowerShell):
+     ```powershell
+     Expand-Archive -Path buktikanbot-<versi>-x86_64-pc-windows-msvc.zip -DestinationPath .
+     .\buktikanbot.exe
+     ```
 
 ## Konfigurasi
 Salin contoh file `.env`:
@@ -46,12 +66,6 @@ Keterangan variabel:
 - `LOG_ENABLED`: `true` untuk tampilkan log, `false` untuk nonaktif.
 - `TIMEZONE`: zona waktu log, default `Asia/Jakarta`.
 
-## Cara Menjalankan
-
-```bash
-cargo run
-```
-
 ## Perintah Bot (Private)
 - `/start`: info bot.
 - `/ping`: cek response time.
@@ -73,9 +87,20 @@ Naikkan versi:
 ./scripts/version_bump.sh patch
 ```
 
-## Cara Compile (Build)
+## Build dari Source (Alternatif)
 
-Build release:
+### Pra Syarat
+- Rust (edisi 2024) dan Cargo.
+
+### Build dan Run
+
+Jalankan langsung:
+
+```bash
+cargo run
+```
+
+Atau build release:
 
 ```bash
 cargo build --release
@@ -93,27 +118,6 @@ Jalankan binary hasil build:
 ./target/release/telegram-buktikanbot
 ```
 
-## Menjalankan dari Release
-
-1) Unduh file release sesuai OS/arsitektur:
-   - `buktikanbot-<versi>-x86_64-unknown-linux-gnu.tar.gz`
-   - `buktikanbot-<versi>-aarch64-unknown-linux-gnu.tar.gz`
-   - `buktikanbot-<versi>-x86_64-apple-darwin.tar.gz`
-   - `buktikanbot-<versi>-aarch64-apple-darwin.tar.gz`
-   - `buktikanbot-<versi>-x86_64-pc-windows-msvc.zip`
-
-2) Ekstrak dan jalankan:
-   - Linux/macOS:
-     ```bash
-     tar -xzf buktikanbot-<versi>-<target>.tar.gz
-     ./buktikanbot
-     ```
-   - Windows (PowerShell):
-     ```powershell
-     Expand-Archive -Path buktikanbot-<versi>-x86_64-pc-windows-msvc.zip -DestinationPath .
-     .\buktikanbot.exe
-     ```
-
 ## Cara Kerja Singkat
 1. Bot mendeteksi user baru yang masuk grup.
 2. Bot mengirim gambar CAPTCHA.
@@ -126,4 +130,8 @@ Jalankan binary hasil build:
 - Untuk keamanan, jangan commit file `.env` ke repo.
 
 ## Credit
-Dibuat oleh bangHasan. Diskusi dan support di grup `@botindonesia`.
+- Hasanudin H Syafaat @hasanudinhs
+- banghasan@gmail.com
+- https://banghasan.com
+
+Diskusi dan support di grup Telegram [@botindonesia](https://t.me/botindonesia).
