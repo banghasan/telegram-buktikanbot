@@ -356,10 +356,10 @@ fn log_message(config: &Config, msg: &Message) {
     let tz_now = now_in_timezone(config.timezone);
     let ts = tz_now.format("%Y-%m-%d %H:%M:%S%.6f");
     let user_id = user.id.0;
-    let first_name = user.first_name.trim();
-    let last_name = user.last_name.as_deref().unwrap_or("");
-    let username = user.username.as_deref().unwrap_or("-");
-    let content = message_content_label(msg);
+    let first_name = sanitize_log_text(user.first_name.trim());
+    let last_name = sanitize_log_text(user.last_name.as_deref().unwrap_or(""));
+    let username = sanitize_log_text(user.username.as_deref().unwrap_or("-"));
+    let content = sanitize_log_text(&message_content_label(msg));
     let username_fmt = format!("@{}", username);
     let name = if last_name.is_empty() {
         first_name.to_string()
@@ -417,9 +417,9 @@ fn log_user_event(config: &Config, user: &teloxide::types::User, chat_id: ChatId
     let tz_now = now_in_timezone(config.timezone);
     let ts = tz_now.format("%Y-%m-%d %H:%M:%S%.6f");
     let user_id = user.id.0;
-    let first_name = user.first_name.trim();
-    let last_name = user.last_name.as_deref().unwrap_or("");
-    let username = user.username.as_deref().unwrap_or("-");
+    let first_name = sanitize_log_text(user.first_name.trim());
+    let last_name = sanitize_log_text(user.last_name.as_deref().unwrap_or(""));
+    let username = sanitize_log_text(user.username.as_deref().unwrap_or("-"));
     let username_fmt = format!("@{}", username);
     let name = if last_name.is_empty() {
         first_name.to_string()
@@ -467,7 +467,7 @@ fn log_user_event_by_ids(config: &Config, user_id: UserId, chat_id: ChatId, text
         color_magenta(),
         color_reset(),
         color_white(),
-        text,
+        sanitize_log_text(text),
         color_reset()
     );
 }
@@ -529,6 +529,51 @@ fn message_content_label(msg: &Message) -> String {
         return "-payment-".to_string();
     }
     "-non-text-".to_string()
+}
+
+fn sanitize_log_text(input: &str) -> String {
+    input
+        .chars()
+        .filter(|ch| !is_invisible_or_control(*ch))
+        .collect::<String>()
+}
+
+fn is_invisible_or_control(ch: char) -> bool {
+    if ch.is_control() {
+        return true;
+    }
+    matches!(
+        ch,
+        '\u{00AD}' // SHY
+            | '\u{061C}' // ALM
+            | '\u{180E}' // MVS
+            | '\u{200B}' // ZWSP
+            | '\u{200C}' // ZWNJ
+            | '\u{200D}' // ZWJ
+            | '\u{200E}' // LRM
+            | '\u{200F}' // RLM
+            | '\u{202A}' // LRE
+            | '\u{202B}' // RLE
+            | '\u{202C}' // PDF
+            | '\u{202D}' // LRO
+            | '\u{202E}' // RLO
+            | '\u{2060}' // WJ
+            | '\u{2061}' // function application
+            | '\u{2062}' // invisible times
+            | '\u{2063}' // invisible separator
+            | '\u{2064}' // invisible plus
+            | '\u{2066}' // LRI
+            | '\u{2067}' // RLI
+            | '\u{2068}' // FSI
+            | '\u{2069}' // PDI
+            | '\u{206A}' // deprecated
+            | '\u{206B}' // deprecated
+            | '\u{206C}' // deprecated
+            | '\u{206D}' // deprecated
+            | '\u{206E}' // deprecated
+            | '\u{206F}' // deprecated
+            | '\u{FEFF}' // BOM/ZWNBSP
+    )
 }
 
 fn color_cyan() -> &'static str {
