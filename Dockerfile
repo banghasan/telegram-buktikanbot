@@ -1,30 +1,27 @@
-# syntax=docker/dockerfile:1.5
-FROM rust:1-slim-bookworm AS builder
-WORKDIR /app
-
-COPY Cargo.toml Cargo.lock ./
-# Create dummy main.rs to build dependencies first (caching layer)
-RUN mkdir src && echo "fn main() {}" > src/main.rs
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    cargo build --release
-
-# Copy actual source code
-COPY src ./src
-# Touch main.rs to ensure cargo rebuilds the binary with new source
-RUN touch src/main.rs
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/app/target \
-    cargo build --release && \
-    cp /app/target/release/telegram-buktikanbot /app/telegram-buktikanbot
-
 FROM debian:bookworm-slim
+# syntax=docker/dockerfile:1.5
+ARG VERSION
+ARG TARGETARCH
+
 # Install required runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     tzdata \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -r -u 10001 appuser
-COPY --from=builder /app/telegram-buktikanbot /usr/local/bin/telegram-buktikanbot
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) target="x86_64-unknown-linux-gnu" ;; \
+      arm64) target="aarch64-unknown-linux-gnu" ;; \
+      *) echo "unsupported arch: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    asset="buktikanbot-${VERSION}-${target}.tar.gz"; \
+    url="https://github.com/banghasan/telegram-buktikanbot/releases/download/v${VERSION}/${asset}"; \
+    curl -fL "$url" -o /tmp/bot.tar.gz; \
+    tar -xzf /tmp/bot.tar.gz -C /tmp; \
+    install -m 0755 /tmp/buktikanbot /usr/local/bin/telegram-buktikanbot; \
+    rm -f /tmp/bot.tar.gz /tmp/buktikanbot /tmp/README.md
 USER appuser
 ENTRYPOINT ["/usr/local/bin/telegram-buktikanbot"]
