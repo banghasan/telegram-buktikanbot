@@ -105,10 +105,12 @@ jobs:
           mkdir -p dist
           if [ "${{ runner.os }}" = "Windows" ]; then
             cp "target/${{ matrix.target }}/release/telegram-buktikanbot.exe" "dist/buktikanbot.exe"
-            powershell -Command "Compress-Archive -Path dist/buktikanbot.exe -DestinationPath ${name}.zip"
+            cp "README.md" "dist/README.md"
+            powershell -Command "Compress-Archive -Path dist/buktikanbot.exe,dist/README.md -DestinationPath ${name}.zip"
           else
             cp "target/${{ matrix.target }}/release/telegram-buktikanbot" "dist/buktikanbot"
-            tar -czf "${name}.tar.gz" -C dist buktikanbot
+            cp "README.md" "dist/README.md"
+            tar -czf "${name}.tar.gz" -C dist buktikanbot README.md
           fi
 
       - name: Upload artifact

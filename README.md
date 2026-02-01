@@ -1,18 +1,20 @@
-# Telegram Buktikan Bot (Rust)
+# Bot Telegram - Buktikan Dirimu Manusia
 
-Bot Telegram untuk memverifikasi user baru yang masuk grup menggunakan CAPTCHA bergambar.
-User wajib menebak teks pada gambar dalam waktu tertentu, jika salah atau tidak menjawab
+Bot Telegram untuk memverifikasi user baru yang masuk grup menggunakan CAPTCHA bergambar. Ketika user masuk grup, hak akses dicabut semua -- hanya bisa kirim teks.
+User wajib menebak teks pada gambar dalam waktu tertentu, jika tidak menjawab dengan benar dalam waktu tertentu,
 maka bot akan mengeluarkan user dari grup. Jika benar, bot menghapus gambar CAPTCHA
-dan pesan jawaban user.
+dan hak akses user dipulihkan.
 
 ![](./screenshot/buktikan.jpg)
 
 ## Fitur
 - Kirim CAPTCHA gambar ke user baru.
 - Panjang teks CAPTCHA dapat diatur lewat `.env`.
-- Timeout verifikasi (default 120 detik).
+- User baru bergabung akan dibatasi hanya boleh kirim teks saja
+- Timeout verifikasi (default 120 detik), bisa disesuaikan sendiri.
 - Jawaban benar: hapus pesan CAPTCHA + pesan jawaban.
 - Jawaban salah terhapus, jika timeout: kick user dari grup.
+- User terverifikasi, hak akses grup dipulihkan.
 
 ## Persyaratan
 - Bot Telegram yang sudah dibuat lewat BotFather.
