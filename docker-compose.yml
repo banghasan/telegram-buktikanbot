@@ -1,0 +1,13 @@
+services:
+  telegram-buktikanbot:
+    image: ghcr.io/banghasan/telegram-buktikanbot:latest
+    container_name: telegram-buktikanbot
+    restart: unless-stopped
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN}
+      CAPTCHA_LEN: ${CAPTCHA_LEN:-6}
+      CAPTCHA_TIMEOUT_SECONDS: ${CAPTCHA_TIMEOUT_SECONDS:-120}
+      CAPTCHA_WIDTH: ${CAPTCHA_WIDTH:-220}
+      CAPTCHA_HEIGHT: ${CAPTCHA_HEIGHT:-100}
+      LOG_ENABLED: ${LOG_ENABLED:-true}
+      TIMEZONE: ${TIMEZONE:-Asia/Jakarta}

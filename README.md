@@ -123,6 +123,40 @@ Jalankan binary hasil build:
 ./target/release/telegram-buktikanbot
 ```
 
+## Docker
+
+### Pull Image (GHCR)
+
+```bash
+docker pull ghcr.io/banghasan/telegram-buktikanbot:latest
+```
+
+Atau gunakan tag versi:
+
+```bash
+docker pull ghcr.io/banghasan/telegram-buktikanbot:<versi>
+```
+
+### Docker Compose
+
+1) Salin `.env.example` ke `.env` dan isi token bot:
+
+```bash
+cp .env.example .env
+```
+
+2) Jalankan:
+
+```bash
+docker compose up -d
+```
+
+Override nilai `.env` saat menjalankan:
+
+```bash
+BOT_TOKEN=your-telegram-bot-token CAPTCHA_TIMEOUT_SECONDS=180 docker compose up -d
+```
+
 ## Cara Kerja Singkat
 1. Bot mendeteksi user baru yang masuk grup.
 2. Bot mengirim gambar CAPTCHA.
