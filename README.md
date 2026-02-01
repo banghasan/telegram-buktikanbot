@@ -5,12 +5,14 @@ User wajib menebak teks pada gambar dalam waktu tertentu, jika salah atau tidak 
 maka bot akan mengeluarkan user dari grup. Jika benar, bot menghapus gambar CAPTCHA
 dan pesan jawaban user.
 
+![](./screenshot/buktikan.jpg)
+
 ## Fitur
 - Kirim CAPTCHA gambar ke user baru.
 - Panjang teks CAPTCHA dapat diatur lewat `.env`.
 - Timeout verifikasi (default 120 detik).
 - Jawaban benar: hapus pesan CAPTCHA + pesan jawaban.
-- Jawaban salah / timeout: kick user dari grup.
+- Jawaban salah terhapus, jika timeout: kick user dari grup.
 
 ## Persyaratan
 - Bot Telegram yang sudah dibuat lewat BotFather.

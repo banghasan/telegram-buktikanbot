@@ -298,7 +298,7 @@ fn captcha_caption(user: &teloxide::types::User, remaining_secs: u64) -> String 
         "🖐🏼 Hi, {mention}\n\n\
 🙏🏼 Please solve this captcha within <code>{remaining_secs}</code> seconds.\n\
 💁🏻‍♂️ Mohon ketik teks pada gambar ini, dalam <code>{remaining_secs}</code> detik.\n\n
-🗒 Setiap ketikan akan terhapus hingga kamu terverifikasi.
+🗒 <i>Setiap ketikan akan terhapus hingga kamu terverifikasi</i>.
 "
     )
 }
