@@ -4,6 +4,8 @@ services:
     container_name: telegram-buktikanbot
     restart: unless-stopped
     environment:
+      # Make sure BOT_TOKEN is set in your .env file or exported in your shell!
+      # If missing, the container will exit immediately.
       BOT_TOKEN: ${BOT_TOKEN}
       CAPTCHA_LEN: ${CAPTCHA_LEN:-6}
       CAPTCHA_TIMEOUT_SECONDS: ${CAPTCHA_TIMEOUT_SECONDS:-120}
