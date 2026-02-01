@@ -12,6 +12,7 @@ dan hak akses user dipulihkan.
 - Panjang teks CAPTCHA dapat diatur lewat `.env`.
 - User baru bergabung akan dibatasi hanya boleh kirim teks saja
 - Timeout verifikasi (default 120 detik), bisa disesuaikan sendiri.
+- Interval update caption (default 5 detik), bisa disesuaikan sendiri.
 - Jawaban benar: hapus pesan CAPTCHA + pesan jawaban.
 - Jawaban salah terhapus, jika timeout: kick user dari grup.
 - User terverifikasi, hak akses grup dipulihkan.
@@ -45,18 +46,13 @@ dan hak akses user dipulihkan.
      ```
 
 ## Konfigurasi
-Salin contoh file `.env`:
-
-```bash
-cp .env.example .env
-```
-
 Isi `.env`:
 
 ```env
 BOT_TOKEN=your-telegram-bot-token
 CAPTCHA_LEN=6
 CAPTCHA_TIMEOUT_SECONDS=120
+CAPTCHA_CAPTION_UPDATE_SECONDS=5
 CAPTCHA_WIDTH=220
 CAPTCHA_HEIGHT=100
 LOG_ENABLED=true
@@ -67,6 +63,7 @@ Keterangan variabel:
 - `BOT_TOKEN`: token bot Telegram.
 - `CAPTCHA_LEN`: panjang karakter CAPTCHA.
 - `CAPTCHA_TIMEOUT_SECONDS`: waktu maksimum menebak.
+- `CAPTCHA_CAPTION_UPDATE_SECONDS`: interval update caption countdown.
 - `CAPTCHA_WIDTH` / `CAPTCHA_HEIGHT`: ukuran gambar CAPTCHA.
 - `LOG_ENABLED`: `true` untuk tampilkan log, `false` untuk nonaktif.
 - `TIMEZONE`: zona waktu log, default `Asia/Jakarta`.
@@ -139,11 +136,7 @@ docker pull ghcr.io/banghasan/telegram-buktikanbot:<versi>
 
 ### Docker Compose
 
-1) Salin `.env.example` ke `.env` dan isi token bot:
-
-```bash
-cp .env.example .env
-```
+1) Isi `.env` dan pastikan token bot terisi.
 
 2) Jalankan:
 
@@ -154,7 +147,7 @@ docker compose up -d
 Override nilai `.env` saat menjalankan:
 
 ```bash
-BOT_TOKEN=your-telegram-bot-token CAPTCHA_TIMEOUT_SECONDS=180 docker compose up -d
+BOT_TOKEN=your-telegram-bot-token CAPTCHA_TIMEOUT_SECONDS=180 CAPTCHA_CAPTION_UPDATE_SECONDS=5 docker compose up -d
 ```
 
 ## Cara Kerja Singkat

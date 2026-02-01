@@ -21,6 +21,7 @@ struct Config {
     token: String,
     captcha_len: usize,
     captcha_timeout_secs: u64,
+    captcha_caption_update_secs: u64,
     captcha_width: u32,
     captcha_height: u32,
     log_enabled: bool,
@@ -114,6 +115,10 @@ impl Config {
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(120);
+        let captcha_caption_update_secs = env::var("CAPTCHA_CAPTION_UPDATE_SECONDS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(5);
         let captcha_width = env::var("CAPTCHA_WIDTH")
             .ok()
             .and_then(|v| v.parse::<u32>().ok())
@@ -135,6 +140,7 @@ impl Config {
             token,
             captcha_len,
             captcha_timeout_secs,
+            captcha_caption_update_secs,
             captcha_width,
             captcha_height,
             log_enabled,
@@ -240,13 +246,14 @@ async fn start_captcha_for_user(
     let user_clone = user.clone();
     let user_id = user.id;
     let timeout = config.captcha_timeout_secs;
+    let update_secs = config.captcha_caption_update_secs.max(1);
     let captcha_message_id = sent.id;
 
     tokio::spawn(async move {
         let mut remaining = timeout;
         while remaining > 0 {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            remaining = remaining.saturating_sub(1);
+            tokio::time::sleep(Duration::from_secs(update_secs)).await;
+            remaining = remaining.saturating_sub(update_secs);
 
             let still_pending = {
                 let guard = state_clone.lock().await;
