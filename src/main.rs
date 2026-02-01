@@ -11,7 +11,8 @@ use chrono::DateTime;
 use chrono_tz::Tz;
 use teloxide::prelude::*;
 use teloxide::types::{
-    ChatMemberStatus, ChatMemberUpdated, InputFile, Message, MessageId, ParseMode, UserId,
+    ChatMemberStatus, ChatMemberUpdated, ChatPermissions, InputFile, Message, MessageId, ParseMode,
+    UserId,
 };
 use tokio::sync::Mutex;
 
@@ -202,6 +203,11 @@ async fn start_captcha_for_user(
         }
     }
 
+    let text_only = ChatPermissions::SEND_MESSAGES;
+    if let Err(err) = bot.restrict_chat_member(chat_id, user.id, text_only).await {
+        eprintln!("failed to restrict user to text-only: {err}");
+    }
+
     let (code, png) = generate_captcha(
         config.captcha_len,
         config.captcha_width,
@@ -310,6 +316,20 @@ fn escape_html(input: &str) -> String {
     out
 }
 
+async fn restore_chat_permissions(
+    bot: &Bot,
+    chat_id: ChatId,
+    user_id: UserId,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let chat = bot.get_chat(chat_id).await?;
+    let Some(permissions) = chat.permissions() else {
+        return Err("chat permissions unavailable".into());
+    };
+    bot.restrict_chat_member(chat_id, user_id, permissions)
+        .await?;
+    Ok(())
+}
+
 async fn on_text(
     bot: Bot,
     msg: Message,
@@ -340,7 +360,7 @@ async fn on_text(
         let _ = bot.delete_message(msg.chat.id, msg.id).await;
 
         if !is_correct {
-            log_user_event(&config, user, msg.chat.id, "==captcha wrong==");
+            log_user_event(&config, user, msg.chat.id, "captcha wrong");
             return Ok(());
         }
 
@@ -352,7 +372,10 @@ async fn on_text(
         let _ = bot
             .delete_message(msg.chat.id, pending.captcha_message_id)
             .await;
-        log_user_event(&config, user, msg.chat.id, "==captcha verified==");
+        if let Err(err) = restore_chat_permissions(&bot, msg.chat.id, user.id).await {
+            eprintln!("failed to restore user permissions: {err}");
+        }
+        log_user_event(&config, user, msg.chat.id, "captcha verified");
         return Ok(());
     }
 

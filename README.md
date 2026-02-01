@@ -15,8 +15,9 @@ dan pesan jawaban user.
 ## Persyaratan
 - Bot Telegram yang sudah dibuat lewat BotFather.
 - Bot jadi admin grup dengan izin:
-  - Delete messages
-  - Ban users
+  - Delete messages (hapus pesan CAPTCHA + jawaban user)
+  - Ban users / Restrict members (batasi user ke text-only dan kick saat timeout)
+  - (Opsional) Manage messages jika ingin bot bisa menghapus pesan di semua tipe grup
 
 ## Menjalankan dari Release
 
@@ -128,6 +129,7 @@ Jalankan binary hasil build:
 ## Catatan
 - State verifikasi disimpan di memori. Jika bot restart, state pending akan hilang.
 - Untuk keamanan, jangan commit file `.env` ke repo.
+- Pastikan bot punya izin admin di grup sesuai daftar di bagian "Persyaratan".
 
 ## Credit
 - Hasanudin H Syafaat @hasanudinhs
