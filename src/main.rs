@@ -615,6 +615,57 @@ fn log_line<T: std::fmt::Display>(
 }
 
 fn log_sub_line(message: &str) {
+    if let Some(close_idx) = message.find(')') {
+        let (context_with_paren, rest) = message.split_at(close_idx + 1);
+        let rest = rest.trim_start();
+        let context = context_with_paren
+            .trim_start()
+            .trim_start_matches('(')
+            .trim_end_matches(')');
+        let mut context_rendered = String::new();
+        let mut remaining = context;
+        if let Some(colon_idx) = remaining.find(':') {
+            let (user_id, after_colon) = remaining.split_at(colon_idx);
+            context_rendered.push_str(color_gray());
+            context_rendered.push_str(user_id.trim());
+            context_rendered.push_str(color_reset());
+            context_rendered.push(':');
+            remaining = after_colon[1..].trim_start();
+        }
+        let (name_part, username_part) = if let Some(at_idx) = remaining.find(" @") {
+            let (name, username) = remaining.split_at(at_idx);
+            (name.trim_end(), username.trim())
+        } else if remaining.starts_with('@') {
+            ("", remaining)
+        } else {
+            (remaining, "")
+        };
+        if !name_part.is_empty() {
+            if !context_rendered.is_empty() && !context_rendered.ends_with(':') {
+                context_rendered.push(' ');
+            }
+            context_rendered.push_str(color_magenta());
+            context_rendered.push_str(name_part.trim());
+            context_rendered.push_str(color_reset());
+        }
+        if !username_part.is_empty() {
+            if !context_rendered.is_empty() {
+                context_rendered.push(' ');
+            }
+            context_rendered.push_str(color_blue());
+            context_rendered.push_str(username_part.trim());
+            context_rendered.push_str(color_reset());
+        }
+        println!(
+            "{}  └ ({}) {}{}{}",
+            color_white(),
+            context_rendered,
+            color_white(),
+            rest,
+            color_reset()
+        );
+        return;
+    }
     println!("{}  └ {}{}", color_white(), message, color_reset());
 }
 
@@ -766,8 +817,16 @@ fn color_magenta() -> &'static str {
     "\x1b[35m"
 }
 
+fn color_blue() -> &'static str {
+    "\x1b[34m"
+}
+
 fn color_white() -> &'static str {
     "\x1b[37m"
+}
+
+fn color_gray() -> &'static str {
+    "\x1b[90m"
 }
 
 fn color_reset() -> &'static str {
