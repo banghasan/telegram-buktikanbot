@@ -489,35 +489,9 @@ fn log_message(config: &Config, msg: &Message) {
     let tz_now = now_in_timezone(config.timezone);
     let ts = tz_now.format("%Y-%m-%d %H:%M:%S%.6f");
     let user_id = user.id.0;
-    let first_name = sanitize_log_text(user.first_name.trim());
-    let last_name = sanitize_log_text(user.last_name.as_deref().unwrap_or(""));
-    let username = sanitize_log_text(user.username.as_deref().unwrap_or("-"));
     let content = sanitize_log_text(&message_content_label(msg));
-    let username_fmt = format!("@{}", username);
-    let name = if last_name.is_empty() {
-        first_name.to_string()
-    } else {
-        format!("{first_name} {last_name}")
-    };
-    println!(
-        "{}[{}]{} {}INFO{} {}[{}@{}]{} {}({} {}){}: {}{}{}",
-        color_cyan(),
-        ts,
-        color_reset(),
-        color_green(),
-        color_reset(),
-        color_yellow(),
-        user_id,
-        msg.chat.id,
-        color_reset(),
-        color_magenta(),
-        name,
-        username_fmt,
-        color_reset(),
-        color_white(),
-        content,
-        color_reset()
-    );
+    let title = msg.chat.title().map(|t| sanitize_log_text(t.trim()));
+    log_line(ts, user_id, msg.chat.id, title.as_deref(), &content);
 }
 
 fn log_system(config: &Config, text: &str) {
@@ -526,21 +500,7 @@ fn log_system(config: &Config, text: &str) {
     }
     let tz_now = now_in_timezone(config.timezone);
     let ts = tz_now.format("%Y-%m-%d %H:%M:%S%.6f");
-    println!(
-        "{}[{}]{} {}INFO{} {}[system@system]{} {}(system){}: {}{}{}",
-        color_cyan(),
-        ts,
-        color_reset(),
-        color_green(),
-        color_reset(),
-        color_yellow(),
-        color_reset(),
-        color_magenta(),
-        color_reset(),
-        color_white(),
-        text,
-        color_reset()
-    );
+    log_line(ts, "system", "system", None, text);
 }
 
 fn log_user_event(config: &Config, user: &teloxide::types::User, chat_id: ChatId, text: &str) {
@@ -550,41 +510,14 @@ fn log_user_event(config: &Config, user: &teloxide::types::User, chat_id: ChatId
     let tz_now = now_in_timezone(config.timezone);
     let ts = tz_now.format("%Y-%m-%d %H:%M:%S%.6f");
     let user_id = user.id.0;
-    let first_name = sanitize_log_text(user.first_name.trim());
-    let last_name = sanitize_log_text(user.last_name.as_deref().unwrap_or(""));
-    let username = sanitize_log_text(user.username.as_deref().unwrap_or("-"));
-    let username_fmt = format!("@{}", username);
-    let name = if last_name.is_empty() {
-        first_name.to_string()
-    } else {
-        format!("{first_name} {last_name}")
-    };
-    println!(
-        "{}[{}]{} {}INFO{} {}[{}@{}]{} {}({} {}){}: {}{}{}",
-        color_cyan(),
-        ts,
-        color_reset(),
-        color_green(),
-        color_reset(),
-        color_yellow(),
-        user_id,
-        chat_id,
-        color_reset(),
-        color_magenta(),
-        name,
-        username_fmt,
-        color_reset(),
-        color_white(),
-        text,
-        color_reset()
-    );
+    log_line(ts, user_id, chat_id, None, text);
 }
 
 fn log_user_event_by_display(
     config: &Config,
     user_id: UserId,
     chat_id: ChatId,
-    user_display: &str,
+    _user_display: &str,
     text: &str,
 ) {
     if !config.log_enabled {
@@ -592,24 +525,53 @@ fn log_user_event_by_display(
     }
     let tz_now = now_in_timezone(config.timezone);
     let ts = tz_now.format("%Y-%m-%d %H:%M:%S%.6f");
-    println!(
-        "{}[{}]{} {}INFO{} {}[{}@{}]{} {}({}){}: {}{}{}",
-        color_cyan(),
-        ts,
-        color_reset(),
-        color_green(),
-        color_reset(),
-        color_yellow(),
-        user_id.0,
-        chat_id,
-        color_reset(),
-        color_magenta(),
-        user_display,
-        color_reset(),
-        color_white(),
-        sanitize_log_text(text),
-        color_reset()
-    );
+    log_line(ts, user_id.0, chat_id, None, &sanitize_log_text(text));
+}
+
+fn log_line<T: std::fmt::Display, U: std::fmt::Display>(
+    ts: chrono::format::DelayedFormat<chrono::format::StrftimeItems<'_>>,
+    user_id: T,
+    chat_id: U,
+    title: Option<&str>,
+    message: &str,
+) {
+    if let Some(title) = title {
+        println!(
+            "{}[{}]{} {}INFO{} {}{}@{}{} {}:{} {}{}{}",
+            color_cyan(),
+            ts,
+            color_reset(),
+            color_green(),
+            color_reset(),
+            color_yellow(),
+            user_id,
+            chat_id,
+            color_reset(),
+            color_yellow(),
+            color_reset(),
+            color_magenta(),
+            title,
+            color_reset()
+        );
+    } else {
+        println!(
+            "{}[{}]{} {}INFO{} {}{}@{}{}",
+            color_cyan(),
+            ts,
+            color_reset(),
+            color_green(),
+            color_reset(),
+            color_yellow(),
+            user_id,
+            chat_id,
+            color_reset()
+        );
+    }
+    log_sub_line(message);
+}
+
+fn log_sub_line(message: &str) {
+    println!("{}  └ {}{}", color_white(), message, color_reset());
 }
 
 fn now_in_timezone(tz: Tz) -> DateTime<Tz> {
