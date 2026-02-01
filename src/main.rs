@@ -296,8 +296,10 @@ fn captcha_caption(user: &teloxide::types::User, remaining_secs: u64) -> String 
     let mention = format!("<a href=\"tg://user?id={}\">{}</a>", user.id.0, name);
     format!(
         "🖐🏼 Hi, {mention}\n\n\
-🙏🏼 Please solve this captcha within <code>{remaining_secs}</code> seconds.\n\n\
-💁🏻‍♂️ Mohon ketik teks pada gambar ini, dalam <code>{remaining_secs}</code> detik."
+🙏🏼 Please solve this captcha within <code>{remaining_secs}</code> seconds.\n\
+💁🏻‍♂️ Mohon ketik teks pada gambar ini, dalam <code>{remaining_secs}</code> detik.\n\n
+🗒 Setiap ketikan akan terhapus hingga kamu terverifikasi.
+"
     )
 }
 
