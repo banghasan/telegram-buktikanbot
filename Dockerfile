@@ -4,13 +4,17 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 # Create dummy main.rs to build dependencies first (caching layer)
 RUN mkdir src && echo "fn main() {}" > src/main.rs
-RUN cargo build --release
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release
 
 # Copy actual source code
 COPY src ./src
 # Touch main.rs to ensure cargo rebuilds the binary with new source
 RUN touch src/main.rs
-RUN cargo build --release
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release
 
 FROM debian:bookworm-slim
 # Install required runtime dependencies
