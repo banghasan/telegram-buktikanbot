@@ -10,7 +10,9 @@ use captcha::filters::Noise;
 use chrono::DateTime;
 use chrono_tz::Tz;
 use teloxide::prelude::*;
-use teloxide::types::{InputFile, Message, MessageId, ParseMode, UserId};
+use teloxide::types::{
+    ChatMemberStatus, ChatMemberUpdated, InputFile, Message, MessageId, ParseMode, UserId,
+};
 use tokio::sync::Mutex;
 
 #[derive(Clone, Debug)]
@@ -48,26 +50,38 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     log_system(&config, "bot started");
 
     let state: SharedState = Arc::new(Mutex::new(HashMap::new()));
-    let handler = Update::filter_message()
+    let handler = dptree::entry()
         .branch(
-            dptree::filter(|msg: Message| msg.new_chat_members().is_some()).endpoint({
-                let state = state.clone();
-                let config = config.clone();
-                move |bot: Bot, msg: Message| {
-                    on_new_members(bot, msg, state.clone(), config.clone())
-                }
-            }),
+            Update::filter_message()
+                .branch(
+                    dptree::filter(|msg: Message| msg.new_chat_members().is_some()).endpoint({
+                        let state = state.clone();
+                        let config = config.clone();
+                        move |bot: Bot, msg: Message| {
+                            on_new_members(bot, msg, state.clone(), config.clone())
+                        }
+                    }),
+                )
+                .branch(
+                    dptree::filter(|msg: Message| msg.text().is_some()).endpoint({
+                        let state = state.clone();
+                        let config = config.clone();
+                        move |bot: Bot, msg: Message| {
+                            on_text(bot, msg, state.clone(), config.clone())
+                        }
+                    }),
+                )
+                .branch(dptree::endpoint({
+                    let config = config.clone();
+                    move |msg: Message| on_non_text(msg, config.clone())
+                })),
         )
-        .branch(
-            dptree::filter(|msg: Message| msg.text().is_some()).endpoint({
-                let state = state.clone();
-                let config = config.clone();
-                move |bot: Bot, msg: Message| on_text(bot, msg, state.clone(), config.clone())
-            }),
-        )
-        .branch(dptree::endpoint({
+        .branch(Update::filter_chat_member().endpoint({
+            let state = state.clone();
             let config = config.clone();
-            move |msg: Message| on_non_text(msg, config.clone())
+            move |bot: Bot, update: ChatMemberUpdated| {
+                on_chat_member_updated(bot, update, state.clone(), config.clone())
+            }
         }));
 
     {
@@ -139,71 +153,158 @@ async fn on_new_members(
     log_message(&config, &msg);
 
     for member in members {
-        if member.is_bot {
-            continue;
-        }
-
-        let (code, png) = generate_captcha(
-            config.captcha_len,
-            config.captcha_width,
-            config.captcha_height,
-        )?;
-
-        let caption = format!(
-            "Please solve this captcha within {} seconds.",
-            config.captcha_timeout_secs
-        );
-        let sent = bot
-            .send_photo(msg.chat.id, InputFile::memory(png))
-            .caption(caption)
-            .await?;
-
-        let pending = PendingCaptcha {
-            code,
-            captcha_message_id: sent.id,
-        };
-
-        {
-            let mut guard = state.lock().await;
-            guard.insert((msg.chat.id, member.id), pending);
-        }
-        log_user_event(&config, &member, msg.chat.id, "captcha sent");
-
-        let bot_clone = bot.clone();
-        let state_clone = state.clone();
-        let config_clone = config.clone();
-        let chat_id = msg.chat.id;
-        let user_id = member.id;
-        let timeout = config.captcha_timeout_secs;
-
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(timeout)).await;
-            let pending = {
-                let mut guard = state_clone.lock().await;
-                guard.remove(&(chat_id, user_id))
-            };
-
-            if let Some(pending) = pending {
-                if let Err(err) = bot_clone.ban_chat_member(chat_id, user_id).await {
-                    eprintln!("failed to ban user on timeout: {err}");
-                }
-                if let Err(err) = bot_clone
-                    .delete_message(chat_id, pending.captcha_message_id)
-                    .await
-                {
-                    eprintln!("failed to delete captcha message on timeout: {err}");
-                }
-                log_user_event_by_ids(
-                    &config_clone,
-                    user_id,
-                    chat_id,
-                    "captcha timeout, user banned",
-                );
-            }
-        });
+        start_captcha_for_user(&bot, msg.chat.id, member.clone(), &state, &config).await?;
     }
 
     Ok(())
+}
+
+async fn on_chat_member_updated(
+    bot: Bot,
+    update: ChatMemberUpdated,
+    state: SharedState,
+    config: Arc<Config>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let old_status = update.old_chat_member.status();
+    let new_status = update.new_chat_member.status();
+    let joined = matches!(
+        old_status,
+        ChatMemberStatus::Left | ChatMemberStatus::Banned
+    ) && matches!(
+        new_status,
+        ChatMemberStatus::Member | ChatMemberStatus::Restricted | ChatMemberStatus::Administrator
+    );
+    if !joined {
+        return Ok(());
+    }
+
+    let user = update.new_chat_member.user;
+    start_captcha_for_user(&bot, update.chat.id, user, &state, &config).await?;
+    Ok(())
+}
+
+async fn start_captcha_for_user(
+    bot: &Bot,
+    chat_id: ChatId,
+    user: teloxide::types::User,
+    state: &SharedState,
+    config: &Arc<Config>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    if user.is_bot {
+        return Ok(());
+    }
+
+    {
+        let guard = state.lock().await;
+        if guard.contains_key(&(chat_id, user.id)) {
+            return Ok(());
+        }
+    }
+
+    let (code, png) = generate_captcha(
+        config.captcha_len,
+        config.captcha_width,
+        config.captcha_height,
+    )?;
+
+    let caption = captcha_caption(&user, config.captcha_timeout_secs);
+    let sent = bot
+        .send_photo(chat_id, InputFile::memory(png))
+        .caption(caption)
+        .parse_mode(ParseMode::Html)
+        .await?;
+
+    let pending = PendingCaptcha {
+        code,
+        captcha_message_id: sent.id,
+    };
+
+    {
+        let mut guard = state.lock().await;
+        guard.insert((chat_id, user.id), pending);
+    }
+    log_user_event(config, &user, chat_id, "captcha sent");
+
+    let bot_clone = bot.clone();
+    let state_clone = state.clone();
+    let config_clone = config.clone();
+    let user_clone = user.clone();
+    let user_id = user.id;
+    let timeout = config.captcha_timeout_secs;
+    let captcha_message_id = sent.id;
+
+    tokio::spawn(async move {
+        let mut remaining = timeout;
+        while remaining > 0 {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            remaining = remaining.saturating_sub(5);
+
+            let still_pending = {
+                let guard = state_clone.lock().await;
+                guard.contains_key(&(chat_id, user_id))
+            };
+            if !still_pending {
+                return;
+            }
+
+            let caption = captcha_caption(&user_clone, remaining);
+            let _ = bot_clone
+                .edit_message_caption(chat_id, captcha_message_id)
+                .caption(caption)
+                .parse_mode(ParseMode::Html)
+                .await;
+        }
+
+        let pending = {
+            let mut guard = state_clone.lock().await;
+            guard.remove(&(chat_id, user_id))
+        };
+
+        if let Some(pending) = pending {
+            if let Err(err) = bot_clone.ban_chat_member(chat_id, user_id).await {
+                eprintln!("failed to ban user on timeout: {err}");
+            }
+            if let Err(err) = bot_clone
+                .delete_message(chat_id, pending.captcha_message_id)
+                .await
+            {
+                eprintln!("failed to delete captcha message on timeout: {err}");
+            }
+            log_user_event_by_ids(
+                &config_clone,
+                user_id,
+                chat_id,
+                "captcha timeout, user banned",
+            );
+        }
+    });
+
+    Ok(())
+}
+
+fn captcha_caption(user: &teloxide::types::User, remaining_secs: u64) -> String {
+    let name = escape_html(&user.first_name);
+    let mention = format!("<a href=\"tg://user?id={}\">{}</a>", user.id.0, name);
+    format!(
+        "{mention}\n\
+Please solve this captcha within <code>{remaining_secs}</code> seconds.\n\n\
+Mohon selesaikan captcha ini dalam <code>{remaining_secs}</code> detik."
+    )
+}
+
+fn escape_html(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 async fn on_text(
@@ -233,6 +334,13 @@ async fn on_text(
     if let Some(pending) = pending {
         let is_correct = text.eq_ignore_ascii_case(&pending.code);
 
+        let _ = bot.delete_message(msg.chat.id, msg.id).await;
+
+        if !is_correct {
+            log_user_event_by_ids(&config, user.id, msg.chat.id, "captcha wrong");
+            return Ok(());
+        }
+
         {
             let mut guard = state.lock().await;
             guard.remove(&key);
@@ -241,14 +349,7 @@ async fn on_text(
         let _ = bot
             .delete_message(msg.chat.id, pending.captcha_message_id)
             .await;
-        let _ = bot.delete_message(msg.chat.id, msg.id).await;
-
-        if !is_correct {
-            log_user_event_by_ids(&config, user.id, msg.chat.id, "captcha wrong");
-        } else {
-            log_user_event_by_ids(&config, user.id, msg.chat.id, "captcha verified");
-        }
-
+        log_user_event_by_ids(&config, user.id, msg.chat.id, "captcha verified");
         return Ok(());
     }
 
