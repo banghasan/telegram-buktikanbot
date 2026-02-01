@@ -231,7 +231,7 @@ async fn start_captcha_for_user(
         let mut guard = state.lock().await;
         guard.insert((chat_id, user.id), pending);
     }
-    log_user_event(config, &user, chat_id, "captcha sent");
+    log_user_event(config, &user, chat_id, "-> ⏳ captcha sent");
 
     let bot_clone = bot.clone();
     let state_clone = state.clone();
@@ -295,9 +295,9 @@ fn captcha_caption(user: &teloxide::types::User, remaining_secs: u64) -> String 
     let name = escape_html(&user.first_name);
     let mention = format!("<a href=\"tg://user?id={}\">{}</a>", user.id.0, name);
     format!(
-        "🖐🏼 Hi, {mention}\n\
+        "🖐🏼 Hi, {mention}\n\n\
 🙏🏼 Please solve this captcha within <code>{remaining_secs}</code> seconds.\n\n\
-💁🏻‍♂️ Mohon selesaikan captcha ini dalam <code>{remaining_secs}</code> detik."
+💁🏻‍♂️ Mohon ketik teks pada gambar ini, dalam <code>{remaining_secs}</code> detik."
     )
 }
 
@@ -360,7 +360,7 @@ async fn on_text(
         let _ = bot.delete_message(msg.chat.id, msg.id).await;
 
         if !is_correct {
-            log_user_event(&config, user, msg.chat.id, "captcha wrong");
+            log_user_event(&config, user, msg.chat.id, "<- 🚫 captcha wrong");
             return Ok(());
         }
 
@@ -375,7 +375,7 @@ async fn on_text(
         if let Err(err) = restore_chat_permissions(&bot, msg.chat.id, user.id).await {
             eprintln!("failed to restore user permissions: {err}");
         }
-        log_user_event(&config, user, msg.chat.id, "captcha verified");
+        log_user_event(&config, user, msg.chat.id, "==> ✅ captcha verified");
         return Ok(());
     }
 
