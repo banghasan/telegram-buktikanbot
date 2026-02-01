@@ -41,6 +41,7 @@ type SharedState = Arc<Mutex<HashMap<CaptchaKey, PendingCaptcha>>>;
 async fn main() {
     if let Err(err) = run().await {
         eprintln!("fatal error: {err}");
+        std::process::exit(1);
     }
 }
 
