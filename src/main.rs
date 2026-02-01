@@ -30,6 +30,7 @@ struct Config {
 struct PendingCaptcha {
     code: String,
     captcha_message_id: MessageId,
+    user_display: String,
 }
 
 type CaptchaKey = (ChatId, UserId);
@@ -217,6 +218,7 @@ async fn start_captcha_for_user(
     let pending = PendingCaptcha {
         code,
         captcha_message_id: sent.id,
+        user_display: format_user_display(&user),
     };
 
     {
@@ -270,10 +272,11 @@ async fn start_captcha_for_user(
             {
                 eprintln!("failed to delete captcha message on timeout: {err}");
             }
-            log_user_event_by_ids(
+            log_user_event_by_display(
                 &config_clone,
                 user_id,
                 chat_id,
+                &pending.user_display,
                 "captcha timeout, user banned",
             );
         }
@@ -286,9 +289,9 @@ fn captcha_caption(user: &teloxide::types::User, remaining_secs: u64) -> String 
     let name = escape_html(&user.first_name);
     let mention = format!("<a href=\"tg://user?id={}\">{}</a>", user.id.0, name);
     format!(
-        "{mention}\n\
-Please solve this captcha within <code>{remaining_secs}</code> seconds.\n\n\
-Mohon selesaikan captcha ini dalam <code>{remaining_secs}</code> detik."
+        "🖐🏼 Hi, {mention}\n\
+🙏🏼 Please solve this captcha within <code>{remaining_secs}</code> seconds.\n\n\
+💁🏻‍♂️ Mohon selesaikan captcha ini dalam <code>{remaining_secs}</code> detik."
     )
 }
 
@@ -337,7 +340,7 @@ async fn on_text(
         let _ = bot.delete_message(msg.chat.id, msg.id).await;
 
         if !is_correct {
-            log_user_event_by_ids(&config, user.id, msg.chat.id, "captcha wrong");
+            log_user_event(&config, user, msg.chat.id, "==captcha wrong==");
             return Ok(());
         }
 
@@ -349,7 +352,7 @@ async fn on_text(
         let _ = bot
             .delete_message(msg.chat.id, pending.captcha_message_id)
             .await;
-        log_user_event_by_ids(&config, user.id, msg.chat.id, "captcha verified");
+        log_user_event(&config, user, msg.chat.id, "==captcha verified==");
         return Ok(());
     }
 
@@ -544,14 +547,20 @@ fn log_user_event(config: &Config, user: &teloxide::types::User, chat_id: ChatId
     );
 }
 
-fn log_user_event_by_ids(config: &Config, user_id: UserId, chat_id: ChatId, text: &str) {
+fn log_user_event_by_display(
+    config: &Config,
+    user_id: UserId,
+    chat_id: ChatId,
+    user_display: &str,
+    text: &str,
+) {
     if !config.log_enabled {
         return;
     }
     let tz_now = now_in_timezone(config.timezone);
     let ts = tz_now.format("%Y-%m-%d %H:%M:%S%.6f");
     println!(
-        "{}[{}]{} {}INFO{} {}[{}@{}]{} {}(unknown @-){}: {}{}{}",
+        "{}[{}]{} {}INFO{} {}[{}@{}]{} {}({}){}: {}{}{}",
         color_cyan(),
         ts,
         color_reset(),
@@ -562,6 +571,7 @@ fn log_user_event_by_ids(config: &Config, user_id: UserId, chat_id: ChatId, text
         chat_id,
         color_reset(),
         color_magenta(),
+        user_display,
         color_reset(),
         color_white(),
         sanitize_log_text(text),
@@ -571,6 +581,18 @@ fn log_user_event_by_ids(config: &Config, user_id: UserId, chat_id: ChatId, text
 
 fn now_in_timezone(tz: Tz) -> DateTime<Tz> {
     chrono::Utc::now().with_timezone(&tz)
+}
+
+fn format_user_display(user: &teloxide::types::User) -> String {
+    let first_name = sanitize_log_text(user.first_name.trim());
+    let last_name = sanitize_log_text(user.last_name.as_deref().unwrap_or(""));
+    let username = sanitize_log_text(user.username.as_deref().unwrap_or("-"));
+    let username_fmt = format!("@{}", username);
+    if last_name.is_empty() {
+        format!("{first_name} {username_fmt}")
+    } else {
+        format!("{first_name} {last_name} {username_fmt}")
+    }
 }
 
 fn message_content_label(msg: &Message) -> String {
