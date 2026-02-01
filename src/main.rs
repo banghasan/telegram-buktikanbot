@@ -488,10 +488,22 @@ fn log_message(config: &Config, msg: &Message) {
     };
     let tz_now = now_in_timezone(config.timezone);
     let ts = tz_now.format("%Y-%m-%d %H:%M:%S%.6f");
-    let user_id = user.id.0;
     let content = sanitize_log_text(&message_content_label(msg));
     let title = msg.chat.title().map(|t| sanitize_log_text(t.trim()));
-    log_line(ts, user_id, msg.chat.id, title.as_deref(), &content);
+    let chat_username = if title.is_some() {
+        msg.chat.username().map(|u| sanitize_log_text(u.trim()))
+    } else {
+        None
+    };
+    let user_context = format_user_context(user);
+    log_line(
+        ts,
+        msg.chat.id,
+        title.as_deref(),
+        chat_username.as_deref(),
+        Some(&user_context),
+        &content,
+    );
 }
 
 fn log_system(config: &Config, text: &str) {
@@ -500,7 +512,14 @@ fn log_system(config: &Config, text: &str) {
     }
     let tz_now = now_in_timezone(config.timezone);
     let ts = tz_now.format("%Y-%m-%d %H:%M:%S%.6f");
-    log_line(ts, "system", "system", None, text);
+    log_line(
+        ts,
+        "system",
+        None,
+        None,
+        Some("system"),
+        &sanitize_log_text(text),
+    );
 }
 
 fn log_user_event(config: &Config, user: &teloxide::types::User, chat_id: ChatId, text: &str) {
@@ -509,8 +528,15 @@ fn log_user_event(config: &Config, user: &teloxide::types::User, chat_id: ChatId
     }
     let tz_now = now_in_timezone(config.timezone);
     let ts = tz_now.format("%Y-%m-%d %H:%M:%S%.6f");
-    let user_id = user.id.0;
-    log_line(ts, user_id, chat_id, None, text);
+    let user_context = format_user_context(user);
+    log_line(
+        ts,
+        chat_id,
+        None,
+        None,
+        Some(&user_context),
+        &sanitize_log_text(text),
+    );
 }
 
 fn log_user_event_by_display(
@@ -525,49 +551,67 @@ fn log_user_event_by_display(
     }
     let tz_now = now_in_timezone(config.timezone);
     let ts = tz_now.format("%Y-%m-%d %H:%M:%S%.6f");
-    log_line(ts, user_id.0, chat_id, None, &sanitize_log_text(text));
+    let user_context = format!("{}:{}", user_id.0, sanitize_log_text(_user_display));
+    log_line(
+        ts,
+        chat_id,
+        None,
+        None,
+        Some(&user_context),
+        &sanitize_log_text(text),
+    );
 }
 
-fn log_line<T: std::fmt::Display, U: std::fmt::Display>(
+fn log_line<T: std::fmt::Display>(
     ts: chrono::format::DelayedFormat<chrono::format::StrftimeItems<'_>>,
-    user_id: T,
-    chat_id: U,
+    chat_id: T,
     title: Option<&str>,
+    chat_username: Option<&str>,
+    user_context: Option<&str>,
     message: &str,
 ) {
+    let mut detail = String::new();
     if let Some(title) = title {
+        detail.push_str(" : ");
+        detail.push_str(title);
+    }
+    if let Some(username) = chat_username {
+        detail.push_str(" @");
+        detail.push_str(username);
+    }
+    if detail.is_empty() {
         println!(
-            "{}[{}]{} {}INFO{} {}{}@{}{} {}:{} {}{}{}",
+            "{}[{}]{} {}INFO{} {}{}{}",
             color_cyan(),
             ts,
             color_reset(),
             color_green(),
             color_reset(),
             color_yellow(),
-            user_id,
             chat_id,
-            color_reset(),
-            color_yellow(),
-            color_reset(),
-            color_magenta(),
-            title,
             color_reset()
         );
     } else {
         println!(
-            "{}[{}]{} {}INFO{} {}{}@{}{}",
+            "{}[{}]{} {}INFO{} {}{}{} {}{}{}",
             color_cyan(),
             ts,
             color_reset(),
             color_green(),
             color_reset(),
             color_yellow(),
-            user_id,
             chat_id,
+            color_reset(),
+            color_magenta(),
+            detail,
             color_reset()
         );
     }
-    log_sub_line(message);
+    if let Some(user_context) = user_context {
+        log_sub_line(&format!("({}) {}", user_context, message));
+    } else {
+        log_sub_line(message);
+    }
 }
 
 fn log_sub_line(message: &str) {
@@ -587,6 +631,22 @@ fn format_user_display(user: &teloxide::types::User) -> String {
         format!("{first_name} {username_fmt}")
     } else {
         format!("{first_name} {last_name} {username_fmt}")
+    }
+}
+
+fn format_user_context(user: &teloxide::types::User) -> String {
+    let first_name = sanitize_log_text(user.first_name.trim());
+    let last_name = sanitize_log_text(user.last_name.as_deref().unwrap_or(""));
+    let username = sanitize_log_text(user.username.as_deref().unwrap_or(""));
+    let name = if last_name.is_empty() {
+        first_name.to_string()
+    } else {
+        format!("{first_name} {last_name}")
+    };
+    if username.is_empty() {
+        format!("{}:{}", user.id.0, name)
+    } else {
+        format!("{}:{} @{}", user.id.0, name, username)
     }
 }
 
