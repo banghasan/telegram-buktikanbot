@@ -573,11 +573,16 @@ fn log_line<T: std::fmt::Display>(
     let mut detail = String::new();
     if let Some(title) = title {
         detail.push_str(" : ");
+        detail.push_str(color_magenta());
         detail.push_str(title);
+        detail.push_str(color_reset());
     }
     if let Some(username) = chat_username {
-        detail.push_str(" @");
+        detail.push(' ');
+        detail.push_str(color_blue());
+        detail.push('@');
         detail.push_str(username);
+        detail.push_str(color_reset());
     }
     if detail.is_empty() {
         println!(
@@ -593,7 +598,7 @@ fn log_line<T: std::fmt::Display>(
         );
     } else {
         println!(
-            "{}[{}]{} {}INFO{} {}{}{} {}{}{}",
+            "{}[{}]{} {}INFO{} {}{}{} {}{}",
             color_cyan(),
             ts,
             color_reset(),
@@ -602,7 +607,6 @@ fn log_line<T: std::fmt::Display>(
             color_yellow(),
             chat_id,
             color_reset(),
-            color_magenta(),
             detail,
             color_reset()
         );
