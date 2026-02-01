@@ -244,8 +244,8 @@ async fn start_captcha_for_user(
     tokio::spawn(async move {
         let mut remaining = timeout;
         while remaining > 0 {
-            tokio::time::sleep(Duration::from_secs(5)).await;
-            remaining = remaining.saturating_sub(5);
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            remaining = remaining.saturating_sub(1);
 
             let still_pending = {
                 let guard = state_clone.lock().await;
