@@ -11,8 +11,8 @@ use chrono::DateTime;
 use chrono_tz::Tz;
 use teloxide::prelude::*;
 use teloxide::types::{
-    ChatMemberStatus, ChatMemberUpdated, ChatPermissions, InputFile, Message, MessageId, ParseMode,
-    UserId,
+    Chat, ChatMemberStatus, ChatMemberUpdated, ChatPermissions, InputFile, Message, MessageId,
+    ParseMode, UserId,
 };
 use tokio::sync::Mutex;
 
@@ -161,8 +161,18 @@ async fn on_new_members(
 
     log_message(&config, &msg);
 
+    let (chat_title, chat_username) = chat_context(&msg.chat);
     for member in members {
-        start_captcha_for_user(&bot, msg.chat.id, member.clone(), &state, &config).await?;
+        start_captcha_for_user(
+            &bot,
+            msg.chat.id,
+            chat_title.clone(),
+            chat_username.clone(),
+            member.clone(),
+            &state,
+            &config,
+        )
+        .await?;
     }
 
     Ok(())
@@ -188,13 +198,25 @@ async fn on_chat_member_updated(
     }
 
     let user = update.new_chat_member.user;
-    start_captcha_for_user(&bot, update.chat.id, user, &state, &config).await?;
+    let (chat_title, chat_username) = chat_context(&update.chat);
+    start_captcha_for_user(
+        &bot,
+        update.chat.id,
+        chat_title,
+        chat_username,
+        user,
+        &state,
+        &config,
+    )
+    .await?;
     Ok(())
 }
 
 async fn start_captcha_for_user(
     bot: &Bot,
     chat_id: ChatId,
+    chat_title: Option<String>,
+    chat_username: Option<String>,
     user: teloxide::types::User,
     state: &SharedState,
     config: &Arc<Config>,
@@ -238,7 +260,14 @@ async fn start_captcha_for_user(
         let mut guard = state.lock().await;
         guard.insert((chat_id, user.id), pending);
     }
-    log_user_event(config, &user, chat_id, "-> ⏳ captcha sent");
+    log_user_event_with_chat(
+        config,
+        &user,
+        chat_id,
+        chat_title.as_deref(),
+        chat_username.as_deref(),
+        "-> ⏳ captcha sent",
+    );
 
     let bot_clone = bot.clone();
     let state_clone = state.clone();
@@ -291,7 +320,7 @@ async fn start_captcha_for_user(
                 user_id,
                 chat_id,
                 &pending.user_display,
-                "captcha timeout, user banned",
+                "-> 🏌🏻‍♂️captcha timeout, user banned",
             );
         }
     });
@@ -370,7 +399,15 @@ async fn on_text(
         let _ = bot.delete_message(msg.chat.id, msg.id).await;
 
         if !is_correct {
-            log_user_event(&config, user, msg.chat.id, "<- 🚫 captcha wrong");
+            let (chat_title, chat_username) = chat_context(&msg.chat);
+            log_user_event_with_chat(
+                &config,
+                user,
+                msg.chat.id,
+                chat_title.as_deref(),
+                chat_username.as_deref(),
+                "<- 🚫 captcha wrong",
+            );
             return Ok(());
         }
 
@@ -385,7 +422,15 @@ async fn on_text(
         if let Err(err) = restore_chat_permissions(&bot, msg.chat.id, user.id).await {
             eprintln!("failed to restore user permissions: {err}");
         }
-        log_user_event(&config, user, msg.chat.id, "==> ✅ captcha verified");
+        let (chat_title, chat_username) = chat_context(&msg.chat);
+        log_user_event_with_chat(
+            &config,
+            user,
+            msg.chat.id,
+            chat_title.as_deref(),
+            chat_username.as_deref(),
+            "==> ✅ captcha verified",
+        );
         return Ok(());
     }
 
@@ -489,12 +534,7 @@ fn log_message(config: &Config, msg: &Message) {
     let tz_now = now_in_timezone(config.timezone);
     let ts = tz_now.format("%Y-%m-%d %H:%M:%S%.6f");
     let content = sanitize_log_text(&message_content_label(msg));
-    let title = msg.chat.title().map(|t| sanitize_log_text(t.trim()));
-    let chat_username = if title.is_some() {
-        msg.chat.username().map(|u| sanitize_log_text(u.trim()))
-    } else {
-        None
-    };
+    let (title, chat_username) = chat_context(&msg.chat);
     let user_context = format_user_context(user);
     log_line(
         ts,
@@ -504,6 +544,16 @@ fn log_message(config: &Config, msg: &Message) {
         Some(&user_context),
         &content,
     );
+}
+
+fn chat_context(chat: &Chat) -> (Option<String>, Option<String>) {
+    let title = chat.title().map(|t| sanitize_log_text(t.trim()));
+    let chat_username = if title.is_some() {
+        chat.username().map(|u| sanitize_log_text(u.trim()))
+    } else {
+        None
+    };
+    (title, chat_username)
 }
 
 fn log_system(config: &Config, text: &str) {
@@ -522,7 +572,14 @@ fn log_system(config: &Config, text: &str) {
     );
 }
 
-fn log_user_event(config: &Config, user: &teloxide::types::User, chat_id: ChatId, text: &str) {
+fn log_user_event_with_chat(
+    config: &Config,
+    user: &teloxide::types::User,
+    chat_id: ChatId,
+    title: Option<&str>,
+    chat_username: Option<&str>,
+    text: &str,
+) {
     if !config.log_enabled {
         return;
     }
@@ -532,8 +589,8 @@ fn log_user_event(config: &Config, user: &teloxide::types::User, chat_id: ChatId
     log_line(
         ts,
         chat_id,
-        None,
-        None,
+        title,
+        chat_username,
         Some(&user_context),
         &sanitize_log_text(text),
     );
