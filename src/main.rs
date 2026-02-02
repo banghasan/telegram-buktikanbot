@@ -25,7 +25,34 @@ struct Config {
     captcha_width: u32,
     captcha_height: u32,
     log_enabled: bool,
+    log_json: bool,
+    log_level: LogLevel,
     timezone: Tz,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum LogLevel {
+    Info,
+    Warn,
+    Error,
+}
+
+impl LogLevel {
+    fn as_str(self) -> &'static str {
+        match self {
+            LogLevel::Info => "INFO",
+            LogLevel::Warn => "WARN",
+            LogLevel::Error => "ERROR",
+        }
+    }
+
+    fn color(self) -> &'static str {
+        match self {
+            LogLevel::Info => color_green(),
+            LogLevel::Warn => color_yellow(),
+            LogLevel::Error => color_red(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -33,6 +60,8 @@ struct PendingCaptcha {
     code: String,
     captcha_message_id: MessageId,
     user_display: String,
+    chat_title: Option<String>,
+    chat_username: Option<String>,
 }
 
 type CaptchaKey = (ChatId, UserId);
@@ -131,6 +160,15 @@ impl Config {
             .ok()
             .map(|v| v.trim().eq_ignore_ascii_case("true"))
             .unwrap_or(true);
+        let log_json = env::var("LOG_JSON")
+            .ok()
+            .map(|v| v.trim().eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let log_level = env::var("LOG_LEVEL")
+            .ok()
+            .as_deref()
+            .map(parse_log_level)
+            .unwrap_or(LogLevel::Info);
         let timezone = env::var("TIMEZONE")
             .ok()
             .and_then(|v| Tz::from_str(v.trim()).ok())
@@ -144,6 +182,8 @@ impl Config {
             captcha_width,
             captcha_height,
             log_enabled,
+            log_json,
+            log_level,
             timezone,
         })
     }
@@ -234,7 +274,15 @@ async fn start_captcha_for_user(
 
     let text_only = ChatPermissions::SEND_MESSAGES;
     if let Err(err) = bot.restrict_chat_member(chat_id, user.id, text_only).await {
-        eprintln!("failed to restrict user to text-only: {err}");
+        log_telegram_error(
+            config,
+            LogLevel::Error,
+            chat_id,
+            chat_title.as_deref(),
+            chat_username.as_deref(),
+            "failed to restrict user to text-only",
+            &err,
+        );
     }
 
     let (code, png) = generate_captcha(
@@ -254,6 +302,8 @@ async fn start_captcha_for_user(
         code,
         captcha_message_id: sent.id,
         user_display: format_user_display(&user),
+        chat_title: chat_title.clone(),
+        chat_username: chat_username.clone(),
     };
 
     {
@@ -307,18 +357,36 @@ async fn start_captcha_for_user(
 
         if let Some(pending) = pending {
             if let Err(err) = bot_clone.ban_chat_member(chat_id, user_id).await {
-                eprintln!("failed to ban user on timeout: {err}");
+                log_telegram_error(
+                    &config_clone,
+                    LogLevel::Error,
+                    chat_id,
+                    pending.chat_title.as_deref(),
+                    pending.chat_username.as_deref(),
+                    "failed to ban user on timeout",
+                    &err,
+                );
             }
             if let Err(err) = bot_clone
                 .delete_message(chat_id, pending.captcha_message_id)
                 .await
             {
-                eprintln!("failed to delete captcha message on timeout: {err}");
+                log_telegram_error(
+                    &config_clone,
+                    LogLevel::Error,
+                    chat_id,
+                    pending.chat_title.as_deref(),
+                    pending.chat_username.as_deref(),
+                    "failed to delete captcha message on timeout",
+                    &err,
+                );
             }
             log_user_event_by_display(
                 &config_clone,
                 user_id,
                 chat_id,
+                pending.chat_title.as_deref(),
+                pending.chat_username.as_deref(),
                 &pending.user_display,
                 "-> 🏌🏻‍♂️captcha timeout, user banned",
             );
@@ -420,7 +488,16 @@ async fn on_text(
             .delete_message(msg.chat.id, pending.captcha_message_id)
             .await;
         if let Err(err) = restore_chat_permissions(&bot, msg.chat.id, user.id).await {
-            eprintln!("failed to restore user permissions: {err}");
+            let (chat_title, chat_username) = chat_context(&msg.chat);
+            log_telegram_error(
+                &config,
+                LogLevel::Error,
+                msg.chat.id,
+                chat_title.as_deref(),
+                chat_username.as_deref(),
+                "failed to restore user permissions",
+                &err,
+            );
         }
         let (chat_title, chat_username) = chat_context(&msg.chat);
         log_user_event_with_chat(
@@ -454,7 +531,16 @@ async fn on_text(
                 .parse_mode(ParseMode::MarkdownV2)
                 .await
             {
-                eprintln!("failed to edit ping response: {err}");
+                let (chat_title, chat_username) = chat_context(&msg.chat);
+                log_telegram_error(
+                    &config,
+                    LogLevel::Warn,
+                    msg.chat.id,
+                    chat_title.as_deref(),
+                    chat_username.as_deref(),
+                    "failed to edit ping response",
+                    &err,
+                );
             }
             return Ok(());
         }
@@ -479,7 +565,16 @@ async fn on_text(
                 .disable_web_page_preview(true)
                 .await
             {
-                eprintln!("failed to send version response: {err}");
+                let (chat_title, chat_username) = chat_context(&msg.chat);
+                log_telegram_error(
+                    &config,
+                    LogLevel::Warn,
+                    msg.chat.id,
+                    chat_title.as_deref(),
+                    chat_username.as_deref(),
+                    "failed to send version response",
+                    &err,
+                );
             }
             return Ok(());
         }
@@ -524,20 +619,34 @@ fn is_version_command(input: &str) -> bool {
     matches!(cmd, "/ver" | "/versi" | "/version")
 }
 
+fn parse_log_level(input: &str) -> LogLevel {
+    match input.trim().to_ascii_lowercase().as_str() {
+        "warn" | "warning" => LogLevel::Warn,
+        "error" | "err" => LogLevel::Error,
+        _ => LogLevel::Info,
+    }
+}
+
+fn log_enabled_at(config: &Config, level: LogLevel) -> bool {
+    config.log_enabled && level >= config.log_level
+}
+
 fn log_message(config: &Config, msg: &Message) {
-    if !config.log_enabled {
+    if !log_enabled_at(config, LogLevel::Info) {
         return;
     }
     let Some(user) = msg.from() else {
         return;
     };
     let tz_now = now_in_timezone(config.timezone);
-    let ts = tz_now.format("%Y-%m-%d %H:%M:%S%.6f");
+    let ts = tz_now.format("%Y-%m-%d %H:%M:%S%.6f").to_string();
     let content = sanitize_log_text(&message_content_label(msg));
     let (title, chat_username) = chat_context(&msg.chat);
     let user_context = format_user_context(user);
     log_line(
-        ts,
+        LogLevel::Info,
+        config.log_json,
+        &ts,
         msg.chat.id,
         title.as_deref(),
         chat_username.as_deref(),
@@ -557,13 +666,15 @@ fn chat_context(chat: &Chat) -> (Option<String>, Option<String>) {
 }
 
 fn log_system(config: &Config, text: &str) {
-    if !config.log_enabled {
+    if !log_enabled_at(config, LogLevel::Info) {
         return;
     }
     let tz_now = now_in_timezone(config.timezone);
-    let ts = tz_now.format("%Y-%m-%d %H:%M:%S%.6f");
+    let ts = tz_now.format("%Y-%m-%d %H:%M:%S%.6f").to_string();
     log_line(
-        ts,
+        LogLevel::Info,
+        config.log_json,
+        &ts,
         "system",
         None,
         None,
@@ -580,14 +691,16 @@ fn log_user_event_with_chat(
     chat_username: Option<&str>,
     text: &str,
 ) {
-    if !config.log_enabled {
+    if !log_enabled_at(config, LogLevel::Info) {
         return;
     }
     let tz_now = now_in_timezone(config.timezone);
-    let ts = tz_now.format("%Y-%m-%d %H:%M:%S%.6f");
+    let ts = tz_now.format("%Y-%m-%d %H:%M:%S%.6f").to_string();
     let user_context = format_user_context(user);
     log_line(
-        ts,
+        LogLevel::Info,
+        config.log_json,
+        &ts,
         chat_id,
         title,
         chat_username,
@@ -600,33 +713,80 @@ fn log_user_event_by_display(
     config: &Config,
     user_id: UserId,
     chat_id: ChatId,
+    title: Option<&str>,
+    chat_username: Option<&str>,
     _user_display: &str,
     text: &str,
 ) {
-    if !config.log_enabled {
+    if !log_enabled_at(config, LogLevel::Info) {
         return;
     }
     let tz_now = now_in_timezone(config.timezone);
-    let ts = tz_now.format("%Y-%m-%d %H:%M:%S%.6f");
+    let ts = tz_now.format("%Y-%m-%d %H:%M:%S%.6f").to_string();
     let user_context = format!("{}:{}", user_id.0, sanitize_log_text(_user_display));
     log_line(
-        ts,
+        LogLevel::Info,
+        config.log_json,
+        &ts,
         chat_id,
-        None,
-        None,
+        title,
+        chat_username,
         Some(&user_context),
         &sanitize_log_text(text),
     );
 }
 
+fn log_telegram_error(
+    config: &Config,
+    level: LogLevel,
+    chat_id: ChatId,
+    title: Option<&str>,
+    chat_username: Option<&str>,
+    context: &str,
+    err: &dyn std::fmt::Display,
+) {
+    if !log_enabled_at(config, level) {
+        return;
+    }
+    let tz_now = now_in_timezone(config.timezone);
+    let ts = tz_now.format("%Y-%m-%d %H:%M:%S%.6f").to_string();
+    let summary = summarize_telegram_error(err);
+    let message = format!("{}: {}", sanitize_log_text(context), summary);
+    log_line(
+        level,
+        config.log_json,
+        &ts,
+        chat_id,
+        title,
+        chat_username,
+        None,
+        &message,
+    );
+}
+
 fn log_line<T: std::fmt::Display>(
-    ts: chrono::format::DelayedFormat<chrono::format::StrftimeItems<'_>>,
+    level: LogLevel,
+    log_json: bool,
+    ts: &str,
     chat_id: T,
     title: Option<&str>,
     chat_username: Option<&str>,
     user_context: Option<&str>,
     message: &str,
 ) {
+    if log_json {
+        let payload = serde_json::json!({
+            "ts": ts,
+            "level": level.as_str(),
+            "chat_id": chat_id.to_string(),
+            "title": title,
+            "chat_username": chat_username,
+            "user_context": user_context,
+            "message": message,
+        });
+        println!("{payload}");
+        return;
+    }
     let mut detail = String::new();
     if let Some(title) = title {
         detail.push_str(" : ");
@@ -641,13 +801,16 @@ fn log_line<T: std::fmt::Display>(
         detail.push_str(username);
         detail.push_str(color_reset());
     }
+    let level_color = level.color();
+    let level_label = level.as_str();
     if detail.is_empty() {
         println!(
-            "{}[{}]{} {}INFO{} {}{}{}",
+            "{}[{}]{} {}{}{} {}{}{}",
             color_cyan(),
             ts,
             color_reset(),
-            color_green(),
+            level_color,
+            level_label,
             color_reset(),
             color_yellow(),
             chat_id,
@@ -655,11 +818,12 @@ fn log_line<T: std::fmt::Display>(
         );
     } else {
         println!(
-            "{}[{}]{} {}INFO{} {}{}{} {}{}",
+            "{}[{}]{} {}{}{} {}{}{} {}{}",
             color_cyan(),
             ts,
             color_reset(),
-            color_green(),
+            level_color,
+            level_label,
             color_reset(),
             color_yellow(),
             chat_id,
@@ -732,6 +896,24 @@ fn log_sub_line(message: &str) {
 
 fn now_in_timezone(tz: Tz) -> DateTime<Tz> {
     chrono::Utc::now().with_timezone(&tz)
+}
+
+fn summarize_telegram_error(err: &dyn std::fmt::Display) -> String {
+    let mut msg = err
+        .to_string()
+        .replace(['\r', '\n'], " ")
+        .trim()
+        .to_string();
+    if let Some(idx) = msg.find(" (caused by ") {
+        msg.truncate(idx);
+    } else if let Some(idx) = msg.find(" caused by ") {
+        msg.truncate(idx);
+    }
+    if msg.len() > 220 {
+        msg.truncate(220);
+        msg.push_str("...");
+    }
+    sanitize_log_text(&msg)
 }
 
 fn format_user_display(user: &teloxide::types::User) -> String {
@@ -872,6 +1054,10 @@ fn color_green() -> &'static str {
 
 fn color_yellow() -> &'static str {
     "\x1b[33m"
+}
+
+fn color_red() -> &'static str {
+    "\x1b[31m"
 }
 
 fn color_magenta() -> &'static str {
