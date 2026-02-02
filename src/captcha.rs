@@ -16,6 +16,9 @@ pub struct PendingCaptcha {
     pub code: String,
     pub captcha_message_id: MessageId,
     pub options: Vec<String>,
+    pub attempts_left: usize,
+    pub attempts_total: usize,
+    pub remaining_secs: u64,
     pub user_display: String,
     pub chat_title: Option<String>,
     pub chat_username: Option<String>,
@@ -46,14 +49,21 @@ pub fn generate_captcha(
     Ok((code, png))
 }
 
-pub fn captcha_caption(user: &teloxide::types::User, remaining_secs: u64) -> String {
+pub fn captcha_caption(
+    user: &teloxide::types::User,
+    remaining_secs: u64,
+    attempts_left: usize,
+    attempts_total: usize,
+) -> String {
     let name = escape_html(&user.first_name);
     let mention = format!("<a href=\"tg://user?id={}\">{}</a>", user.id.0, name);
     format!(
         "🖐🏼 Hi, {mention}\n\n\
-🙏🏼 Please solve this captcha within <code>{remaining_secs}</code> seconds.\n\
-💁🏻‍♂️ Pilih jawaban yang benar dari tombol di bawah, dalam <code>{remaining_secs}</code> detik.\n\n\
-🗒 <i>Setiap ketikan akan terhapus hingga kamu terverifikasi</i>.
+🙏🏼 <b>Please solve this captcha.</b>\n\
+💁🏻‍♂️ Pilih jawaban yang benar dari tombol yang tersedia.\n\n\
+⏳ Dalam <code>{remaining_secs}</code> detik.\n\
+🎯 Kesempatan: <code>{attempts_left}</code>/<code>{attempts_total}</code>\n\n\
+🗒 <i>Setelah menjawab dengan benar, kamu baru bisa mendapatkan akses user group.</i>.
 "
     )
 }
@@ -85,6 +95,8 @@ pub fn make_pending_captcha(
     code: String,
     captcha_message_id: MessageId,
     options: Vec<String>,
+    attempts_total: usize,
+    remaining_secs: u64,
     user: &teloxide::types::User,
     chat_title: Option<String>,
     chat_username: Option<String>,
@@ -93,6 +105,9 @@ pub fn make_pending_captcha(
         code,
         captcha_message_id,
         options,
+        attempts_left: attempts_total,
+        attempts_total,
+        remaining_secs,
         user_display: format_user_display(user),
         chat_title,
         chat_username,
@@ -129,6 +144,9 @@ mod tests {
                 code: "AbC".to_string(),
                 captcha_message_id: MessageId(10),
                 options: vec!["AbC".to_string(), "ZZZ".to_string()],
+                attempts_left: 3,
+                attempts_total: 3,
+                remaining_secs: 120,
                 user_display: "User @user".to_string(),
                 chat_title: Some("Group".to_string()),
                 chat_username: Some("groupname".to_string()),

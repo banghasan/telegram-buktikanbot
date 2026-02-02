@@ -56,6 +56,7 @@ CAPTCHA_CAPTION_UPDATE_SECONDS=10
 CAPTCHA_WIDTH=220
 CAPTCHA_HEIGHT=100
 CAPTCHA_OPTION_COUNT=6
+CAPTCHA_ATTEMPTS=3
 LOG_ENABLED=true
 LOG_JSON=false
 LOG_LEVEL=info
@@ -69,6 +70,7 @@ Keterangan variabel:
 - `CAPTCHA_CAPTION_UPDATE_SECONDS`: interval update caption countdown (default 10 detik).
 - `CAPTCHA_WIDTH` / `CAPTCHA_HEIGHT`: ukuran gambar CAPTCHA.
 - `CAPTCHA_OPTION_COUNT`: jumlah tombol pilihan jawaban (default 6).
+- `CAPTCHA_ATTEMPTS`: jumlah kesempatan menjawab (default 3).
 - `LOG_ENABLED`: `true` untuk tampilkan log, `false` untuk nonaktif.
 - `LOG_JSON`: `true` untuk output log JSON, `false` untuk log berwarna.
 - `LOG_LEVEL`: `info`, `warn`, atau `error` (default `info`).

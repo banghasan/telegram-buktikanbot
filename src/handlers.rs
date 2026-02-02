@@ -101,15 +101,18 @@ async fn start_captcha_for_user(
         }
     }
 
-    let text_only = ChatPermissions::SEND_MESSAGES;
-    if let Err(err) = bot.restrict_chat_member(chat_id, user.id, text_only).await {
+    let no_permissions = ChatPermissions::empty();
+    if let Err(err) = bot
+        .restrict_chat_member(chat_id, user.id, no_permissions)
+        .await
+    {
         log_telegram_error(
             config,
             LogLevel::Error,
             chat_id,
             chat_title.as_deref(),
             chat_username.as_deref(),
-            "failed to restrict user to text-only",
+            "failed to restrict user",
             &err,
         );
     }
@@ -120,7 +123,12 @@ async fn start_captcha_for_user(
         config.captcha_height,
     )?;
 
-    let caption = captcha_caption(&user, config.captcha_timeout_secs);
+    let caption = captcha_caption(
+        &user,
+        config.captcha_timeout_secs,
+        config.captcha_attempts,
+        config.captcha_attempts,
+    );
     let options = generate_captcha_options(&code, config.captcha_option_count);
     let keyboard = build_captcha_keyboard(&options);
     let sent = bot
@@ -134,6 +142,8 @@ async fn start_captcha_for_user(
         code,
         sent.id,
         options,
+        config.captcha_attempts,
+        config.captcha_timeout_secs,
         &user,
         chat_title.clone(),
         chat_username.clone(),
@@ -175,14 +185,20 @@ async fn start_captcha_for_user(
                 return;
             }
 
-            let caption = captcha_caption(&user_clone, remaining);
-            let options = {
-                let guard = state_clone.lock().await;
-                guard
-                    .get(&(chat_id, user_id))
-                    .map(|pending| pending.options.clone())
+            let options_state = {
+                let mut guard = state_clone.lock().await;
+                guard.get_mut(&(chat_id, user_id)).map(|pending| {
+                    pending.remaining_secs = remaining;
+                    (
+                        pending.options.clone(),
+                        pending.attempts_left,
+                        pending.attempts_total,
+                    )
+                })
             };
-            if let Some(options) = options {
+            if let Some((options, attempts_left, attempts_total)) = options_state {
+                let caption =
+                    captcha_caption(&user_clone, remaining, attempts_left, attempts_total);
                 let _ = bot_clone
                     .edit_message_caption(chat_id, captcha_message_id)
                     .caption(caption)
@@ -251,20 +267,13 @@ pub async fn on_text(
         return Ok(());
     }
 
-    let text = match msg.text() {
-        Some(text) => text.trim().to_string(),
-        None => return Ok(()),
-    };
-
-    let key = (msg.chat.id, user.id);
-    let check = {
-        let mut guard = state.lock().await;
-        check_captcha_answer(&mut guard, key, &text)
-    };
-
-    match check {
-        CaptchaCheck::NoPending => {}
-        CaptchaCheck::Wrong => {
+    if msg.text().is_some() {
+        let key = (msg.chat.id, user.id);
+        let pending = {
+            let guard = state.lock().await;
+            guard.contains_key(&key)
+        };
+        if pending {
             let _ = bot.delete_message(msg.chat.id, msg.id).await;
             let (chat_title, chat_username) = chat_context(&msg.chat);
             log_user_event_with_chat(
@@ -273,39 +282,16 @@ pub async fn on_text(
                 msg.chat.id,
                 chat_title.as_deref(),
                 chat_username.as_deref(),
-                "<- 🚫 captcha wrong",
-            );
-            return Ok(());
-        }
-        CaptchaCheck::Verified(pending) => {
-            let _ = bot.delete_message(msg.chat.id, msg.id).await;
-            let _ = bot
-                .delete_message(msg.chat.id, pending.captcha_message_id)
-                .await;
-            if let Err(err) = restore_chat_permissions(&bot, msg.chat.id, user.id).await {
-                let (chat_title, chat_username) = chat_context(&msg.chat);
-                log_telegram_error(
-                    &config,
-                    LogLevel::Error,
-                    msg.chat.id,
-                    chat_title.as_deref(),
-                    chat_username.as_deref(),
-                    "failed to restore user permissions",
-                    &err,
-                );
-            }
-            let (chat_title, chat_username) = chat_context(&msg.chat);
-            log_user_event_with_chat(
-                &config,
-                user,
-                msg.chat.id,
-                chat_title.as_deref(),
-                chat_username.as_deref(),
-                "==> ✅ captcha verified",
+                "<- 🚫 captcha text blocked",
             );
             return Ok(());
         }
     }
+
+    let text = match msg.text() {
+        Some(text) => text.trim().to_string(),
+        None => return Ok(()),
+    };
 
     log_message(&config, &msg);
 
@@ -438,35 +424,92 @@ pub async fn on_callback_query(
                 .await;
         }
         CaptchaCheck::Wrong => {
-            let updated_options = {
+            let updated = {
                 let mut guard = state.lock().await;
                 guard.get_mut(&key).map(|pending| {
+                    pending.attempts_left = pending.attempts_left.saturating_sub(1);
                     let options =
                         generate_captcha_options(&pending.code, config.captcha_option_count);
                     pending.options = options.clone();
-                    options
+                    (
+                        options,
+                        pending.attempts_left,
+                        pending.attempts_total,
+                        pending.remaining_secs,
+                    )
                 })
             };
-            if let Some(options) = updated_options {
+            if let Some((options, attempts_left, attempts_total, remaining_secs)) = updated {
+                if attempts_left == 0 {
+                    let pending = {
+                        let mut guard = state.lock().await;
+                        guard.remove(&key)
+                    };
+                    if let Some(pending) = pending {
+                        if let Err(err) = bot.ban_chat_member(chat_id, from.id).await {
+                            log_telegram_error(
+                                &config,
+                                LogLevel::Error,
+                                chat_id,
+                                pending.chat_title.as_deref(),
+                                pending.chat_username.as_deref(),
+                                "failed to ban user on attempts exceeded",
+                                &err,
+                            );
+                        }
+                        if let Err(err) = bot
+                            .delete_message(chat_id, pending.captcha_message_id)
+                            .await
+                        {
+                            log_telegram_error(
+                                &config,
+                                LogLevel::Error,
+                                chat_id,
+                                pending.chat_title.as_deref(),
+                                pending.chat_username.as_deref(),
+                                "failed to delete captcha message on attempts exceeded",
+                                &err,
+                            );
+                        }
+                        log_user_event_by_display(
+                            &config,
+                            from.id,
+                            chat_id,
+                            pending.chat_title.as_deref(),
+                            pending.chat_username.as_deref(),
+                            &pending.user_display,
+                            "-> 🧨 captcha attempts exceeded, user banned",
+                        );
+                    }
+                    let _ = bot
+                        .answer_callback_query(id)
+                        .text("❌ Kesempatan habis. Kamu dikeluarkan.")
+                        .show_alert(true)
+                        .await;
+                    return Ok(());
+                }
+                let caption = captcha_caption(&from, remaining_secs, attempts_left, attempts_total);
                 let _ = bot
-                    .edit_message_reply_markup(chat_id, message.id)
+                    .edit_message_caption(chat_id, message.id)
+                    .caption(caption)
+                    .parse_mode(ParseMode::Html)
                     .reply_markup(build_captcha_keyboard(&options))
                     .await;
+                let _ = bot
+                    .answer_callback_query(id)
+                    .text("❌ Jawaban salah, coba lagi.")
+                    .show_alert(false)
+                    .await;
+                let (chat_title, chat_username) = chat_context(&message.chat);
+                log_user_event_with_chat(
+                    &config,
+                    &from,
+                    chat_id,
+                    chat_title.as_deref(),
+                    chat_username.as_deref(),
+                    "<- 🚫 captcha wrong (button)",
+                );
             }
-            let _ = bot
-                .answer_callback_query(id)
-                .text("❌ Jawaban salah, coba lagi.")
-                .show_alert(false)
-                .await;
-            let (chat_title, chat_username) = chat_context(&message.chat);
-            log_user_event_with_chat(
-                &config,
-                &from,
-                chat_id,
-                chat_title.as_deref(),
-                chat_username.as_deref(),
-                "<- 🚫 captcha wrong (button)",
-            );
         }
         CaptchaCheck::Verified(pending) => {
             let _ = bot

@@ -32,13 +32,14 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let version_line = format!("(system) version: {}", env!("CARGO_PKG_VERSION"));
     let config_line = format!(
-        "(system) config: captcha_len={} timeout={}s update={}s size={}x{} options={} log_json={} log_level={} timezone={} run_mode={}",
+        "(system) config: captcha_len={} timeout={}s update={}s size={}x{} options={} attempts={} log_json={} log_level={} timezone={} run_mode={}",
         config.captcha_len,
         config.captcha_timeout_secs,
         config.captcha_caption_update_secs,
         config.captcha_width,
         config.captcha_height,
         config.captcha_option_count,
+        config.captcha_attempts,
         config.log_json,
         config.log_level.as_str(),
         config.timezone,
