@@ -15,7 +15,7 @@ use crate::config::{Config, LogLevel, RunMode};
 use crate::handlers::{
     on_callback_query, on_chat_member_updated, on_new_members, on_non_text, on_text,
 };
-use crate::logging::{format_username_blue, log_system, log_system_level, log_system_raw};
+use crate::logging::{log_system, log_system_block, log_system_level};
 
 #[tokio::main]
 async fn main() {
@@ -30,29 +30,23 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     let config = Arc::new(Config::from_env()?);
     let bot = Bot::new(config.token.clone());
 
-    log_system_level(
-        &config,
-        LogLevel::Info,
-        &format!(
-            "config: captcha_len={} timeout={}s update={}s size={}x{} options={} log_json={} log_level={} timezone={} run_mode={}",
-            config.captcha_len,
-            config.captcha_timeout_secs,
-            config.captcha_caption_update_secs,
-            config.captcha_width,
-            config.captcha_height,
-            config.captcha_option_count,
-            config.log_json,
-            config.log_level.as_str(),
-            config.timezone,
-            match config.run_mode {
-                RunMode::Polling => "polling",
-                RunMode::Webhook => "webhook",
-            }
-        ),
+    let version_line = format!("(system) version: {}", env!("CARGO_PKG_VERSION"));
+    let config_line = format!(
+        "(system) config: captcha_len={} timeout={}s update={}s size={}x{} options={} log_json={} log_level={} timezone={} run_mode={}",
+        config.captcha_len,
+        config.captcha_timeout_secs,
+        config.captcha_caption_update_secs,
+        config.captcha_width,
+        config.captcha_height,
+        config.captcha_option_count,
+        config.log_json,
+        config.log_level.as_str(),
+        config.timezone,
+        match config.run_mode {
+            RunMode::Polling => "polling",
+            RunMode::Webhook => "webhook",
+        }
     );
-    for warning in &config.config_warnings {
-        log_system_level(&config, LogLevel::Warn, warning);
-    }
     let bot_username = match bot.get_me().await {
         Ok(me) => me.username.as_deref().unwrap_or("unknown").to_string(),
         Err(err) => {
@@ -60,12 +54,15 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
             "unknown".to_string()
         }
     };
-    let username_colored = format_username_blue(&bot_username);
-    log_system_raw(
+    let started_line = format!("(system) bot started @{}", bot_username);
+    log_system_block(
         &config,
         LogLevel::Info,
-        &format!("bot started {}", username_colored),
+        &[started_line, version_line, config_line],
     );
+    for warning in &config.config_warnings {
+        log_system_level(&config, LogLevel::Warn, warning);
+    }
 
     let state: SharedState = Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
     let handler = dptree::entry()

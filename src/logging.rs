@@ -47,22 +47,32 @@ pub fn log_system(config: &Config, text: &str) {
     log_system_level(config, LogLevel::Info, text);
 }
 
-pub fn log_system_raw(config: &Config, level: LogLevel, text: &str) {
+pub fn log_system_block(config: &Config, level: LogLevel, lines: &[String]) {
     if !log_enabled_at(config, level) {
         return;
     }
     let tz_now = now_in_timezone(config.timezone);
     let ts = tz_now.format("%Y-%m-%d %H:%M:%S%.6f").to_string();
-    log_line(
-        level,
-        config.log_json,
-        &ts,
-        "system",
-        None,
-        None,
-        Some("system"),
-        text,
-    );
+    if config.log_json {
+        for line in lines {
+            log_line(
+                level,
+                config.log_json,
+                &ts,
+                "system",
+                None,
+                None,
+                Some("system"),
+                &sanitize_log_text(line),
+            );
+        }
+        return;
+    }
+    println!("{}", render_log_header(level, &ts, "system", None, None));
+    for (idx, line) in lines.iter().enumerate() {
+        let prefix = if idx + 1 == lines.len() { '└' } else { '├' };
+        log_sub_line_with_prefix(prefix, &sanitize_log_text(line));
+    }
 }
 
 pub fn log_system_level(config: &Config, level: LogLevel, text: &str) {
@@ -164,10 +174,6 @@ pub fn log_telegram_error(
     );
 }
 
-pub fn format_username_blue(username: &str) -> String {
-    format!("{}@{}{}", color_blue(), username, color_reset())
-}
-
 fn log_line<T: std::fmt::Display>(
     level: LogLevel,
     log_json: bool,
@@ -204,6 +210,10 @@ fn log_line<T: std::fmt::Display>(
 
 fn log_sub_line(message: &str) {
     println!("{}", render_log_sub_line(message));
+}
+
+fn log_sub_line_with_prefix(prefix: char, message: &str) {
+    println!("{}", render_log_sub_line_with_prefix(prefix, message));
 }
 
 fn render_log_header(
@@ -312,6 +322,61 @@ fn render_log_sub_line(message: &str) -> String {
         );
     }
     format!("{}  └ {}{}", color_white(), message, color_reset())
+}
+
+fn render_log_sub_line_with_prefix(prefix: char, message: &str) -> String {
+    if let Some(close_idx) = message.find(')') {
+        let (context_with_paren, rest) = message.split_at(close_idx + 1);
+        let rest = rest.trim_start();
+        let context = context_with_paren
+            .trim_start()
+            .trim_start_matches('(')
+            .trim_end_matches(')');
+        let mut context_rendered = String::new();
+        let mut remaining = context;
+        if let Some(colon_idx) = remaining.find(':') {
+            let (user_id, after_colon) = remaining.split_at(colon_idx);
+            context_rendered.push_str(color_gray());
+            context_rendered.push_str(user_id.trim());
+            context_rendered.push_str(color_reset());
+            context_rendered.push(':');
+            remaining = after_colon[1..].trim_start();
+        }
+        let (name_part, username_part) = if let Some(at_idx) = remaining.find(" @") {
+            let (name, username) = remaining.split_at(at_idx);
+            (name.trim_end(), username.trim())
+        } else if remaining.starts_with('@') {
+            ("", remaining)
+        } else {
+            (remaining, "")
+        };
+        if !name_part.is_empty() {
+            if !context_rendered.is_empty() && !context_rendered.ends_with(':') {
+                context_rendered.push(' ');
+            }
+            context_rendered.push_str(color_magenta());
+            context_rendered.push_str(name_part.trim());
+            context_rendered.push_str(color_reset());
+        }
+        if !username_part.is_empty() {
+            if !context_rendered.is_empty() {
+                context_rendered.push(' ');
+            }
+            context_rendered.push_str(color_blue());
+            context_rendered.push_str(username_part.trim());
+            context_rendered.push_str(color_reset());
+        }
+        return format!(
+            "{}  {} ({}) {}{}{}",
+            color_white(),
+            prefix,
+            context_rendered,
+            color_white(),
+            rest,
+            color_reset()
+        );
+    }
+    format!("{}  {} {}{}", color_white(), prefix, message, color_reset())
 }
 
 fn now_in_timezone(tz: Tz) -> DateTime<Tz> {
