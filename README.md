@@ -71,6 +71,9 @@ Keterangan variabel:
 - `LOG_JSON`: `true` untuk output log JSON, `false` untuk log berwarna.
 - `LOG_LEVEL`: `info`, `warn`, atau `error` (default `info`).
 - `TIMEZONE`: zona waktu log, default `Asia/Jakarta`.
+- `RUN_MODE`: `polling` (default) atau `webhook`.
+
+Jika ingin menjalankan mode webhook, lihat panduan lengkap di [`WEBHOOK.md`](./WEBHOOK.md).
 
 ## Perintah Bot (Private)
 - `/start`: info bot.
@@ -153,6 +156,8 @@ Override nilai `.env` saat menjalankan:
 ```bash
 BOT_TOKEN=your-telegram-bot-token CAPTCHA_TIMEOUT_SECONDS=180 CAPTCHA_CAPTION_UPDATE_SECONDS=10 docker compose up -d
 ```
+
+Untuk mode webhook via Docker Compose, lihat [`WEBHOOK.md`](./WEBHOOK.md) dan contoh [`docker-compose.webhook.yml`](./docker-compose.webhook.yml).
 
 ## Cara Kerja Singkat
 1. Bot mendeteksi user baru yang masuk grup.

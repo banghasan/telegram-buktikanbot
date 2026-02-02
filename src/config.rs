@@ -1,8 +1,10 @@
 use std::env;
 use std::error::Error;
+use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 
 use chrono_tz::Tz;
+use url::Url;
 
 use crate::utils::sanitize_log_text;
 
@@ -23,6 +25,12 @@ impl LogLevel {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunMode {
+    Polling,
+    Webhook,
+}
+
 #[derive(Clone, Debug)]
 pub struct Config {
     pub token: String,
@@ -36,6 +44,10 @@ pub struct Config {
     pub log_level: LogLevel,
     pub timezone: Tz,
     pub config_warnings: Vec<String>,
+    pub run_mode: RunMode,
+    pub webhook_url: Option<Url>,
+    pub webhook_listen_addr: SocketAddr,
+    pub webhook_secret_token: Option<String>,
 }
 
 impl Config {
@@ -65,10 +77,35 @@ impl Config {
                 })
             })
             .unwrap_or(LogLevel::Info);
+        let run_mode = match env::var("RUN_MODE").ok() {
+            Some(raw) => parse_run_mode(&raw).ok_or_else(|| {
+                format!(
+                    "RUN_MODE invalid ('{}'), expected polling|webhook",
+                    sanitize_log_text(&raw)
+                )
+            })?,
+            None => RunMode::Polling,
+        };
+        let webhook_path = normalize_webhook_path(
+            env::var("WEBHOOK_PATH").unwrap_or_else(|_| "/telegram".to_string()),
+        );
+        let webhook_url = env::var("WEBHOOK_URL")
+            .ok()
+            .map(|raw| parse_webhook_url(&raw, &webhook_path))
+            .transpose()?;
+        let webhook_listen_addr = parse_webhook_listen_addr(&mut warnings);
+        let webhook_secret_token = env::var("WEBHOOK_SECRET_TOKEN")
+            .ok()
+            .map(|raw| validate_webhook_secret(&raw))
+            .transpose()?;
         let timezone = env::var("TIMEZONE")
             .ok()
             .and_then(|v| Tz::from_str(v.trim()).ok())
             .unwrap_or(chrono_tz::Asia::Jakarta);
+
+        if matches!(run_mode, RunMode::Webhook) && webhook_url.is_none() {
+            return Err("WEBHOOK_URL is required for webhook mode".into());
+        }
 
         Ok(Self {
             token,
@@ -82,6 +119,10 @@ impl Config {
             log_level,
             timezone,
             config_warnings: warnings,
+            run_mode,
+            webhook_url,
+            webhook_listen_addr,
+            webhook_secret_token,
         })
     }
 }
@@ -91,6 +132,14 @@ pub fn parse_log_level(input: &str) -> Option<LogLevel> {
         "info" => Some(LogLevel::Info),
         "warn" | "warning" => Some(LogLevel::Warn),
         "error" | "err" => Some(LogLevel::Error),
+        _ => None,
+    }
+}
+
+fn parse_run_mode(input: &str) -> Option<RunMode> {
+    match input.trim().to_ascii_lowercase().as_str() {
+        "polling" | "poll" => Some(RunMode::Polling),
+        "webhook" | "webhooks" => Some(RunMode::Webhook),
         _ => None,
     }
 }
@@ -193,5 +242,156 @@ fn parse_env_bool(name: &str, default: bool, warnings: &mut Vec<String>) -> bool
             ));
             default
         }
+    }
+}
+
+fn parse_webhook_listen_addr(warnings: &mut Vec<String>) -> SocketAddr {
+    let addr = env::var("WEBHOOK_LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0".to_string());
+    let port = env::var("WEBHOOK_PORT")
+        .ok()
+        .and_then(|v| v.trim().parse::<u16>().ok())
+        .unwrap_or(8080);
+    let ip = addr.trim().parse::<IpAddr>().unwrap_or_else(|_| {
+        warnings.push(format!(
+            "WEBHOOK_LISTEN_ADDR invalid ('{}'), using 0.0.0.0",
+            sanitize_log_text(&addr)
+        ));
+        IpAddr::from([0, 0, 0, 0])
+    });
+    SocketAddr::new(ip, port)
+}
+
+fn normalize_webhook_path(path: String) -> String {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return "/telegram".to_string();
+    }
+    if trimmed.starts_with('/') {
+        trimmed.to_string()
+    } else {
+        format!("/{trimmed}")
+    }
+}
+
+fn parse_webhook_url(raw: &str, path: &str) -> Result<Url, String> {
+    match Url::parse(raw.trim()) {
+        Ok(mut url) => {
+            url.set_path(path);
+            Ok(url)
+        }
+        Err(_) => Err(format!(
+            "WEBHOOK_URL invalid ('{}')",
+            sanitize_log_text(raw)
+        )),
+    }
+}
+
+fn validate_webhook_secret(raw: &str) -> Result<String, String> {
+    let token = raw.trim();
+    let len = token.len();
+    if !(1..=256).contains(&len) {
+        return Err(format!("WEBHOOK_SECRET_TOKEN length invalid ({})", len));
+    }
+    if token
+        .as_bytes()
+        .iter()
+        .any(|c| !matches!(c, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'-'))
+    {
+        return Err("WEBHOOK_SECRET_TOKEN has invalid characters".to_string());
+    }
+    Ok(token.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvGuard(Vec<(String, Option<String>)>);
+
+    impl EnvGuard {
+        fn set(vars: &[(&str, &str)], clears: &[&str]) -> Self {
+            let mut saved = Vec::new();
+            for key in clears {
+                saved.push((key.to_string(), env::var(key).ok()));
+                unsafe {
+                    env::remove_var(key);
+                }
+            }
+            for (key, value) in vars {
+                saved.push((key.to_string(), env::var(key).ok()));
+                unsafe {
+                    env::set_var(key, value);
+                }
+            }
+            Self(saved)
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in self.0.drain(..) {
+                match value {
+                    Some(val) => unsafe {
+                        env::set_var(key, val);
+                    },
+                    None => unsafe {
+                        env::remove_var(key);
+                    },
+                }
+            }
+        }
+    }
+
+    fn base_required_env() -> Vec<(&'static str, &'static str)> {
+        vec![("BOT_TOKEN", "test-token")]
+    }
+
+    #[test]
+    fn run_mode_invalid_fails_fast() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let mut vars = base_required_env();
+        vars.push(("RUN_MODE", "invalid"));
+        let _guard = EnvGuard::set(&vars, &["WEBHOOK_URL", "WEBHOOK_SECRET_TOKEN"]);
+        let err = Config::from_env().unwrap_err().to_string();
+        assert!(err.contains("RUN_MODE invalid"));
+    }
+
+    #[test]
+    fn webhook_url_required_in_webhook_mode() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let mut vars = base_required_env();
+        vars.push(("RUN_MODE", "webhook"));
+        let _guard = EnvGuard::set(&vars, &["WEBHOOK_URL"]);
+        let err = Config::from_env().unwrap_err().to_string();
+        assert!(err.contains("WEBHOOK_URL is required"));
+    }
+
+    #[test]
+    fn webhook_path_normalizes_and_applies_to_url() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let mut vars = base_required_env();
+        vars.push(("RUN_MODE", "webhook"));
+        vars.push(("WEBHOOK_URL", "https://example.com"));
+        vars.push(("WEBHOOK_PATH", "tg"));
+        let _guard = EnvGuard::set(&vars, &[]);
+        let cfg = Config::from_env().unwrap();
+        let url = cfg.webhook_url.unwrap();
+        assert_eq!(url.as_str(), "https://example.com/tg");
+    }
+
+    #[test]
+    fn webhook_secret_token_validation() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let mut vars = base_required_env();
+        vars.push(("RUN_MODE", "webhook"));
+        vars.push(("WEBHOOK_URL", "https://example.com"));
+        vars.push(("WEBHOOK_SECRET_TOKEN", "bad token"));
+        let _guard = EnvGuard::set(&vars, &[]);
+        let err = Config::from_env().unwrap_err().to_string();
+        assert!(err.contains("WEBHOOK_SECRET_TOKEN has invalid characters"));
     }
 }

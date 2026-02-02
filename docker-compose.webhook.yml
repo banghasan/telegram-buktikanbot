@@ -1,0 +1,56 @@
+services:
+  telegram-buktikanbot:
+    image: ghcr.io/banghasan/telegram-buktikanbot:latest
+    container_name: telegram-buktikanbot
+    restart: unless-stopped
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN}
+      RUN_MODE: webhook
+      WEBHOOK_URL: ${WEBHOOK_URL}
+      WEBHOOK_PATH: ${WEBHOOK_PATH:-/telegram}
+      WEBHOOK_LISTEN_ADDR: 0.0.0.0
+      WEBHOOK_PORT: 8080
+      WEBHOOK_SECRET_TOKEN: ${WEBHOOK_SECRET_TOKEN:-}
+      CAPTCHA_LEN: ${CAPTCHA_LEN:-6}
+      CAPTCHA_TIMEOUT_SECONDS: ${CAPTCHA_TIMEOUT_SECONDS:-120}
+      CAPTCHA_CAPTION_UPDATE_SECONDS: ${CAPTCHA_CAPTION_UPDATE_SECONDS:-10}
+      CAPTCHA_WIDTH: ${CAPTCHA_WIDTH:-220}
+      CAPTCHA_HEIGHT: ${CAPTCHA_HEIGHT:-100}
+      LOG_ENABLED: ${LOG_ENABLED:-true}
+      LOG_JSON: ${LOG_JSON:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TIMEZONE: ${TIMEZONE:-Asia/Jakarta}
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2
+    container_name: telegram-buktikanbot-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+      EMAIL: ${EMAIL}
+      WEBHOOK_PATH: ${WEBHOOK_PATH:-/telegram}
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    command: >
+      sh -c 'cat > /etc/caddy/Caddyfile <<EOF
+      ${DOMAIN} {
+        encode gzip
+        tls ${EMAIL}
+        handle ${WEBHOOK_PATH} {
+          reverse_proxy telegram-buktikanbot:8080
+        }
+      }
+      EOF
+      caddy run --config /etc/caddy/Caddyfile --adapter caddyfile'
+    depends_on:
+      - telegram-buktikanbot
+
+volumes:
+  caddy_data:
+  caddy_config:

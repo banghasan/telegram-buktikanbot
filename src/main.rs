@@ -2,6 +2,7 @@ use std::error::Error;
 use std::sync::Arc;
 
 use teloxide::prelude::*;
+use teloxide::update_listeners::webhooks;
 
 mod captcha;
 mod config;
@@ -10,7 +11,7 @@ mod logging;
 mod utils;
 
 use crate::captcha::SharedState;
-use crate::config::{Config, LogLevel};
+use crate::config::{Config, LogLevel, RunMode};
 use crate::handlers::{on_chat_member_updated, on_new_members, on_non_text, on_text};
 use crate::logging::{log_system, log_system_level};
 
@@ -31,7 +32,7 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         &config,
         LogLevel::Info,
         &format!(
-            "config: captcha_len={} timeout={}s update={}s size={}x{} log_json={} log_level={} timezone={}",
+            "config: captcha_len={} timeout={}s update={}s size={}x{} log_json={} log_level={} timezone={} run_mode={}",
             config.captcha_len,
             config.captcha_timeout_secs,
             config.captcha_caption_update_secs,
@@ -39,7 +40,11 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
             config.captcha_height,
             config.log_json,
             config.log_level.as_str(),
-            config.timezone
+            config.timezone,
+            match config.run_mode {
+                RunMode::Polling => "polling",
+                RunMode::Webhook => "webhook",
+            }
         ),
     );
     for warning in &config.config_warnings {
@@ -52,23 +57,27 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         .branch(
             Update::filter_message()
                 .branch(
-                    dptree::filter(|msg: teloxide::types::Message| msg.new_chat_members().is_some())
-                        .endpoint({
-                            let state = state.clone();
-                            let config = config.clone();
-                            move |bot: Bot, msg: teloxide::types::Message| {
-                                on_new_members(bot, msg, state.clone(), config.clone())
-                            }
-                        }),
-                )
-                .branch(
-                    dptree::filter(|msg: teloxide::types::Message| msg.text().is_some()).endpoint({
+                    dptree::filter(|msg: teloxide::types::Message| {
+                        msg.new_chat_members().is_some()
+                    })
+                    .endpoint({
                         let state = state.clone();
                         let config = config.clone();
                         move |bot: Bot, msg: teloxide::types::Message| {
-                            on_text(bot, msg, state.clone(), config.clone())
+                            on_new_members(bot, msg, state.clone(), config.clone())
                         }
                     }),
+                )
+                .branch(
+                    dptree::filter(|msg: teloxide::types::Message| msg.text().is_some()).endpoint(
+                        {
+                            let state = state.clone();
+                            let config = config.clone();
+                            move |bot: Bot, msg: teloxide::types::Message| {
+                                on_text(bot, msg, state.clone(), config.clone())
+                            }
+                        },
+                    ),
                 )
                 .branch(dptree::endpoint({
                     let config = config.clone();
@@ -93,6 +102,44 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         });
     }
 
-    Dispatcher::builder(bot, handler).build().dispatch().await;
+    match config.run_mode {
+        RunMode::Polling => {
+            if let Err(err) = bot.delete_webhook().send().await {
+                log_system_level(
+                    &config,
+                    LogLevel::Warn,
+                    &format!("delete webhook failed: {err}"),
+                );
+            }
+            Dispatcher::builder(bot, handler).build().dispatch().await;
+        }
+        RunMode::Webhook => {
+            let Some(url) = config.webhook_url.clone() else {
+                return Err("WEBHOOK_URL is required for webhook mode".into());
+            };
+            let mut options = webhooks::Options::new(config.webhook_listen_addr, url);
+            if let Some(secret) = config.webhook_secret_token.clone() {
+                options = options.secret_token(secret);
+            }
+            log_system_level(
+                &config,
+                LogLevel::Info,
+                &format!(
+                    "webhook: listen={} url={}",
+                    config.webhook_listen_addr, options.url
+                ),
+            );
+            let listener = webhooks::axum(bot.clone(), options)
+                .await
+                .map_err(|err| format!("failed to setup webhook: {err}"))?;
+            Dispatcher::builder(bot, handler)
+                .build()
+                .dispatch_with_listener(
+                    listener,
+                    LoggingErrorHandler::with_custom_text("update listener error"),
+                )
+                .await;
+        }
+    }
     Ok(())
 }
