@@ -45,6 +45,29 @@ WEBHOOK_URL=https://domain-anda.com
 WEBHOOK_PATH=/telegram
 ```
 
+## Contoh Ngrok (Dev/Testing)
+Untuk testing cepat, gunakan ngrok agar punya HTTPS publik sementara.
+
+1) Jalankan bot dengan listen lokal:
+```
+RUN_MODE=webhook
+WEBHOOK_LISTEN_ADDR=127.0.0.1
+WEBHOOK_PORT=8080
+WEBHOOK_PATH=/telegram
+```
+
+2) Jalankan ngrok:
+```
+ngrok http 8080
+```
+
+3) Ambil URL HTTPS dari output ngrok, lalu set:
+```
+WEBHOOK_URL=https://<id>.ngrok-free.app
+```
+
+Bot akan set webhook ke `https://<id>.ngrok-free.app/telegram`.
+
 ## Secret Token (Opsional)
 Jika `WEBHOOK_SECRET_TOKEN` diset, Telegram akan mengirim header:
 
