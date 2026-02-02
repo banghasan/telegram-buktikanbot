@@ -347,7 +347,7 @@ pub async fn on_text(
         }
 
         if is_command(command, "start") {
-            let text = "🤖 *Bot Verifikasi User*\n👤 oleh *bangHasan* \\(@hasanudinhs\\)\n👥 Group @botindonesia";
+            let text = "🤖 *Verification Bot User*\n👤 by *bangHasan* @hasanudinhs\n👥 Support: @botindonesia";
             bot.send_message(msg.chat.id, text)
                 .parse_mode(ParseMode::MarkdownV2)
                 .await?;

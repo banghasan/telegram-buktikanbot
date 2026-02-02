@@ -1,5 +1,7 @@
 # Bot Telegram - Buktikan Dirimu Manusia
 
+Read this README in English: [README.en.md](./README.en.md)
+
 Bot Telegram untuk memverifikasi user baru yang masuk grup menggunakan CAPTCHA bergambar. Ketika user masuk grup, hak akses dicabut semua -- hanya bisa kirim teks.
 User wajib menebak teks pada gambar dalam waktu tertentu, jika tidak menjawab dengan benar dalam waktu tertentu,
 maka bot akan mengeluarkan user dari grup. Jika benar, bot menghapus gambar CAPTCHA
