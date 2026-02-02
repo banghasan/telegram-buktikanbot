@@ -28,6 +28,10 @@ pub async fn on_new_members(
         return Ok(());
     };
 
+    if config.delete_join_message {
+        let _ = bot.delete_message(msg.chat.id, msg.id).await;
+    }
+
     log_message(&config, &msg);
 
     let (chat_title, chat_username) = chat_context(&msg.chat);
