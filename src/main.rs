@@ -13,7 +13,7 @@ mod utils;
 use crate::captcha::SharedState;
 use crate::config::{Config, LogLevel, RunMode};
 use crate::handlers::{on_chat_member_updated, on_new_members, on_non_text, on_text};
-use crate::logging::{log_system, log_system_level};
+use crate::logging::{format_username_blue, log_system, log_system_level, log_system_raw};
 
 #[tokio::main]
 async fn main() {
@@ -50,7 +50,19 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     for warning in &config.config_warnings {
         log_system_level(&config, LogLevel::Warn, warning);
     }
-    log_system(&config, "bot started");
+    let bot_username = match bot.get_me().await {
+        Ok(me) => me.username.as_deref().unwrap_or("unknown").to_string(),
+        Err(err) => {
+            log_system_level(&config, LogLevel::Warn, &format!("getMe failed: {err}"));
+            "unknown".to_string()
+        }
+    };
+    let username_colored = format_username_blue(&bot_username);
+    log_system_raw(
+        &config,
+        LogLevel::Info,
+        &format!("bot started {}", username_colored),
+    );
 
     let state: SharedState = Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
     let handler = dptree::entry()

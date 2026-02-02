@@ -47,6 +47,24 @@ pub fn log_system(config: &Config, text: &str) {
     log_system_level(config, LogLevel::Info, text);
 }
 
+pub fn log_system_raw(config: &Config, level: LogLevel, text: &str) {
+    if !log_enabled_at(config, level) {
+        return;
+    }
+    let tz_now = now_in_timezone(config.timezone);
+    let ts = tz_now.format("%Y-%m-%d %H:%M:%S%.6f").to_string();
+    log_line(
+        level,
+        config.log_json,
+        &ts,
+        "system",
+        None,
+        None,
+        Some("system"),
+        text,
+    );
+}
+
 pub fn log_system_level(config: &Config, level: LogLevel, text: &str) {
     if !log_enabled_at(config, level) {
         return;
@@ -144,6 +162,10 @@ pub fn log_telegram_error(
         None,
         &message,
     );
+}
+
+pub fn format_username_blue(username: &str) -> String {
+    format!("{}@{}{}", color_blue(), username, color_reset())
 }
 
 fn log_line<T: std::fmt::Display>(

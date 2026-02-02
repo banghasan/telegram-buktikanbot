@@ -336,9 +336,29 @@ pub async fn on_text(
         }
 
         if is_version_command(command) {
+            let run_mode = match config.run_mode {
+                crate::config::RunMode::Polling => "polling",
+                crate::config::RunMode::Webhook => "webhook",
+            };
+            let log_info = if config.log_enabled {
+                format!(
+                    "enabled (level: {})",
+                    config.log_level.as_str().to_ascii_lowercase()
+                )
+            } else {
+                "disabled".to_string()
+            };
+            let timezone = config.timezone.to_string();
             let text = format!(
-                "🧩 *BuktikanBot*\n📦 Version: `{}`",
-                env!("CARGO_PKG_VERSION")
+                "🧩 *BuktikanBot*\n\
+📦 Version: `{}`\n\
+⚙️ Mode: `{}`\n\
+🪵 Log: `{}`\n\
+🕒 Timezone: `{}`",
+                escape_markdown_v2(env!("CARGO_PKG_VERSION")),
+                escape_markdown_v2(run_mode),
+                escape_markdown_v2(&log_info),
+                escape_markdown_v2(&timezone)
             );
             if let Err(err) = bot
                 .send_message(msg.chat.id, text)
@@ -396,4 +416,19 @@ fn is_version_command(input: &str) -> bool {
     let lowered = input.trim().to_ascii_lowercase();
     let cmd = lowered.split('@').next().unwrap_or(&lowered);
     matches!(cmd, "/ver" | "/versi" | "/version")
+}
+
+fn escape_markdown_v2(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        match ch {
+            '_' | '*' | '[' | ']' | '(' | ')' | '~' | '`' | '>' | '#' | '+' | '-' | '=' | '|'
+            | '{' | '}' | '.' | '!' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
 }
