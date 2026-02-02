@@ -42,6 +42,7 @@ pub struct Config {
     pub captcha_option_count: usize,
     pub captcha_attempts: usize,
     pub delete_join_message: bool,
+    pub delete_left_message: bool,
     pub log_enabled: bool,
     pub log_json: bool,
     pub log_level: LogLevel,
@@ -69,6 +70,7 @@ impl Config {
         let captcha_option_count = parse_env_usize("CAPTCHA_OPTION_COUNT", 6, 3, 12, &mut warnings);
         let captcha_attempts = parse_env_usize("CAPTCHA_ATTEMPTS", 3, 1, 10, &mut warnings);
         let delete_join_message = parse_env_bool("DELETE_JOIN_MESSAGE", true, &mut warnings);
+        let delete_left_message = parse_env_bool("DELETE_LEFT_MESSAGE", true, &mut warnings);
         let log_enabled = parse_env_bool("LOG_ENABLED", true, &mut warnings);
         let log_json = parse_env_bool("LOG_JSON", false, &mut warnings);
         let log_level = env::var("LOG_LEVEL")
@@ -123,6 +125,7 @@ impl Config {
             captcha_option_count,
             captcha_attempts,
             delete_join_message,
+            delete_left_message,
             log_enabled,
             log_json,
             log_level,

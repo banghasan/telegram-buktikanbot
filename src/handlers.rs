@@ -51,6 +51,21 @@ pub async fn on_new_members(
     Ok(())
 }
 
+pub async fn on_left_member(
+    bot: Bot,
+    msg: Message,
+    config: Arc<Config>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    if msg.left_chat_member().is_none() {
+        return Ok(());
+    }
+    if config.delete_left_message {
+        let _ = bot.delete_message(msg.chat.id, msg.id).await;
+    }
+    log_message(&config, &msg);
+    Ok(())
+}
+
 pub async fn on_chat_member_updated(
     bot: Bot,
     update: ChatMemberUpdated,

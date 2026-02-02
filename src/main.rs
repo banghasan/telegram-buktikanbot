@@ -13,7 +13,7 @@ mod utils;
 use crate::captcha::SharedState;
 use crate::config::{Config, LogLevel, RunMode};
 use crate::handlers::{
-    on_callback_query, on_chat_member_updated, on_new_members, on_non_text, on_text,
+    on_callback_query, on_chat_member_updated, on_left_member, on_new_members, on_non_text, on_text,
 };
 use crate::logging::{log_system, log_system_block, log_system_level};
 
@@ -32,7 +32,7 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let version_line = format!("(system) version: {}", env!("CARGO_PKG_VERSION"));
     let config_line = format!(
-        "(system) config: captcha_len={} timeout={}s update={}s size={}x{} options={} attempts={} delete_join_message={} log_json={} log_level={} timezone={} run_mode={}",
+        "(system) config: captcha_len={} timeout={}s update={}s size={}x{} options={} attempts={} delete_join_message={} delete_left_message={} log_json={} log_level={} timezone={} run_mode={}",
         config.captcha_len,
         config.captcha_timeout_secs,
         config.captcha_caption_update_secs,
@@ -41,6 +41,7 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         config.captcha_option_count,
         config.captcha_attempts,
         config.delete_join_message,
+        config.delete_left_message,
         config.log_json,
         config.log_level.as_str(),
         config.timezone,
@@ -79,6 +80,17 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
                         let config = config.clone();
                         move |bot: Bot, msg: teloxide::types::Message| {
                             on_new_members(bot, msg, state.clone(), config.clone())
+                        }
+                    }),
+                )
+                .branch(
+                    dptree::filter(|msg: teloxide::types::Message| {
+                        msg.left_chat_member().is_some()
+                    })
+                    .endpoint({
+                        let config = config.clone();
+                        move |bot: Bot, msg: teloxide::types::Message| {
+                            on_left_member(bot, msg, config.clone())
                         }
                     }),
                 )
