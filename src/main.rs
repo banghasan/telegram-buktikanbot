@@ -12,7 +12,9 @@ mod utils;
 
 use crate::captcha::SharedState;
 use crate::config::{Config, LogLevel, RunMode};
-use crate::handlers::{on_chat_member_updated, on_new_members, on_non_text, on_text};
+use crate::handlers::{
+    on_callback_query, on_chat_member_updated, on_new_members, on_non_text, on_text,
+};
 use crate::logging::{format_username_blue, log_system, log_system_level, log_system_raw};
 
 #[tokio::main]
@@ -32,12 +34,13 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         &config,
         LogLevel::Info,
         &format!(
-            "config: captcha_len={} timeout={}s update={}s size={}x{} log_json={} log_level={} timezone={} run_mode={}",
+            "config: captcha_len={} timeout={}s update={}s size={}x{} options={} log_json={} log_level={} timezone={} run_mode={}",
             config.captcha_len,
             config.captcha_timeout_secs,
             config.captcha_caption_update_secs,
             config.captcha_width,
             config.captcha_height,
+            config.captcha_option_count,
             config.log_json,
             config.log_level.as_str(),
             config.timezone,
@@ -101,6 +104,13 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
             let config = config.clone();
             move |bot: Bot, update: teloxide::types::ChatMemberUpdated| {
                 on_chat_member_updated(bot, update, state.clone(), config.clone())
+            }
+        }))
+        .branch(Update::filter_callback_query().endpoint({
+            let state = state.clone();
+            let config = config.clone();
+            move |bot: Bot, query: teloxide::types::CallbackQuery| {
+                on_callback_query(bot, query, state.clone(), config.clone())
             }
         }));
 

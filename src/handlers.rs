@@ -4,12 +4,13 @@ use std::time::{Duration, Instant};
 
 use teloxide::prelude::*;
 use teloxide::types::{
-    ChatMemberStatus, ChatMemberUpdated, ChatPermissions, InputFile, Message, ParseMode, UserId,
+    CallbackQuery, ChatMemberStatus, ChatMemberUpdated, ChatPermissions, InlineKeyboardButton,
+    InlineKeyboardMarkup, InputFile, Message, ParseMode, UserId,
 };
 
 use crate::captcha::{
     CaptchaCheck, SharedState, captcha_caption, check_captcha_answer, generate_captcha,
-    make_pending_captcha,
+    generate_captcha_options, make_pending_captcha,
 };
 use crate::config::{Config, LogLevel};
 use crate::logging::{
@@ -120,15 +121,19 @@ async fn start_captcha_for_user(
     )?;
 
     let caption = captcha_caption(&user, config.captcha_timeout_secs);
+    let options = generate_captcha_options(&code, config.captcha_option_count);
+    let keyboard = build_captcha_keyboard(&options);
     let sent = bot
         .send_photo(chat_id, InputFile::memory(png))
         .caption(caption)
         .parse_mode(ParseMode::Html)
+        .reply_markup(keyboard)
         .await?;
 
     let pending = make_pending_captcha(
         code,
         sent.id,
+        options,
         &user,
         chat_title.clone(),
         chat_username.clone(),
@@ -171,11 +176,20 @@ async fn start_captcha_for_user(
             }
 
             let caption = captcha_caption(&user_clone, remaining);
-            let _ = bot_clone
-                .edit_message_caption(chat_id, captcha_message_id)
-                .caption(caption)
-                .parse_mode(ParseMode::Html)
-                .await;
+            let options = {
+                let guard = state_clone.lock().await;
+                guard
+                    .get(&(chat_id, user_id))
+                    .map(|pending| pending.options.clone())
+            };
+            if let Some(options) = options {
+                let _ = bot_clone
+                    .edit_message_caption(chat_id, captcha_message_id)
+                    .caption(caption)
+                    .parse_mode(ParseMode::Html)
+                    .reply_markup(build_captcha_keyboard(&options))
+                    .await;
+            }
         }
 
         let pending = {
@@ -384,6 +398,112 @@ pub async fn on_text(
     Ok(())
 }
 
+pub async fn on_callback_query(
+    bot: Bot,
+    query: CallbackQuery,
+    state: SharedState,
+    config: Arc<Config>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let CallbackQuery {
+        id,
+        from,
+        data,
+        message,
+        ..
+    } = query;
+    let Some(data) = data.as_deref() else {
+        return Ok(());
+    };
+    if !data.starts_with("captcha:") {
+        return Ok(());
+    }
+    let Some(message) = message else {
+        return Ok(());
+    };
+    let chat_id = message.chat.id;
+    let key = (chat_id, from.id);
+    let selected = data.trim_start_matches("captcha:");
+
+    let check = {
+        let mut guard = state.lock().await;
+        check_captcha_answer(&mut guard, key, selected)
+    };
+
+    match check {
+        CaptchaCheck::NoPending => {
+            let _ = bot
+                .answer_callback_query(id)
+                .text("🚫 Captcha sudah selesai atau bukan untukmu.")
+                .show_alert(true)
+                .await;
+        }
+        CaptchaCheck::Wrong => {
+            let updated_options = {
+                let mut guard = state.lock().await;
+                guard.get_mut(&key).map(|pending| {
+                    let options =
+                        generate_captcha_options(&pending.code, config.captcha_option_count);
+                    pending.options = options.clone();
+                    options
+                })
+            };
+            if let Some(options) = updated_options {
+                let _ = bot
+                    .edit_message_reply_markup(chat_id, message.id)
+                    .reply_markup(build_captcha_keyboard(&options))
+                    .await;
+            }
+            let _ = bot
+                .answer_callback_query(id)
+                .text("❌ Jawaban salah, coba lagi.")
+                .show_alert(false)
+                .await;
+            let (chat_title, chat_username) = chat_context(&message.chat);
+            log_user_event_with_chat(
+                &config,
+                &from,
+                chat_id,
+                chat_title.as_deref(),
+                chat_username.as_deref(),
+                "<- 🚫 captcha wrong (button)",
+            );
+        }
+        CaptchaCheck::Verified(pending) => {
+            let _ = bot
+                .delete_message(chat_id, pending.captcha_message_id)
+                .await;
+            if let Err(err) = restore_chat_permissions(&bot, chat_id, from.id).await {
+                let (chat_title, chat_username) = chat_context(&message.chat);
+                log_telegram_error(
+                    &config,
+                    LogLevel::Error,
+                    chat_id,
+                    chat_title.as_deref(),
+                    chat_username.as_deref(),
+                    "failed to restore user permissions",
+                    &err,
+                );
+            }
+            let _ = bot
+                .answer_callback_query(id)
+                .text("✅ Captcha benar. Terima kasih!")
+                .show_alert(false)
+                .await;
+            let (chat_title, chat_username) = chat_context(&message.chat);
+            log_user_event_with_chat(
+                &config,
+                &from,
+                chat_id,
+                chat_title.as_deref(),
+                chat_username.as_deref(),
+                "==> ✅ captcha verified (button)",
+            );
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn on_non_text(
     msg: Message,
     config: Arc<Config>,
@@ -431,4 +551,19 @@ fn escape_markdown_v2(input: &str) -> String {
         }
     }
     out
+}
+
+fn build_captcha_keyboard(options: &[String]) -> InlineKeyboardMarkup {
+    let rows: Vec<Vec<InlineKeyboardButton>> = options
+        .chunks(3)
+        .map(|chunk| {
+            chunk
+                .iter()
+                .map(|option| {
+                    InlineKeyboardButton::callback(option.to_string(), format!("captcha:{option}"))
+                })
+                .collect()
+        })
+        .collect();
+    InlineKeyboardMarkup::new(rows)
 }

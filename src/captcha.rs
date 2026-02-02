@@ -4,6 +4,8 @@ use std::sync::Arc;
 
 use captcha::Captcha;
 use captcha::filters::Noise;
+use rand::distributions::Alphanumeric;
+use rand::{Rng, seq::SliceRandom};
 use teloxide::types::{ChatId, MessageId, UserId};
 use tokio::sync::Mutex;
 
@@ -13,6 +15,7 @@ use crate::utils::{escape_html, format_user_display};
 pub struct PendingCaptcha {
     pub code: String,
     pub captcha_message_id: MessageId,
+    pub options: Vec<String>,
     pub user_display: String,
     pub chat_title: Option<String>,
     pub chat_username: Option<String>,
@@ -49,15 +52,39 @@ pub fn captcha_caption(user: &teloxide::types::User, remaining_secs: u64) -> Str
     format!(
         "🖐🏼 Hi, {mention}\n\n\
 🙏🏼 Please solve this captcha within <code>{remaining_secs}</code> seconds.\n\
-💁🏻‍♂️ Mohon ketik teks pada gambar ini, dalam <code>{remaining_secs}</code> detik.\n\n
+💁🏻‍♂️ Pilih jawaban yang benar dari tombol di bawah, dalam <code>{remaining_secs}</code> detik.\n\n\
 🗒 <i>Setiap ketikan akan terhapus hingga kamu terverifikasi</i>.
 "
     )
 }
 
+pub fn generate_captcha_options(code: &str, count: usize) -> Vec<String> {
+    let target = count.max(2);
+    let mut options = Vec::with_capacity(target);
+    options.push(code.to_string());
+
+    let mut rng = rand::thread_rng();
+    while options.len() < target {
+        let candidate: String = (0..code.len())
+            .map(|_| rng.sample(Alphanumeric) as char)
+            .map(|ch| ch.to_ascii_uppercase())
+            .collect();
+        if options
+            .iter()
+            .all(|opt| !opt.eq_ignore_ascii_case(&candidate))
+        {
+            options.push(candidate);
+        }
+    }
+
+    options.shuffle(&mut rng);
+    options
+}
+
 pub fn make_pending_captcha(
     code: String,
     captcha_message_id: MessageId,
+    options: Vec<String>,
     user: &teloxide::types::User,
     chat_title: Option<String>,
     chat_username: Option<String>,
@@ -65,6 +92,7 @@ pub fn make_pending_captcha(
     PendingCaptcha {
         code,
         captcha_message_id,
+        options,
         user_display: format_user_display(user),
         chat_title,
         chat_username,
@@ -100,6 +128,7 @@ mod tests {
             PendingCaptcha {
                 code: "AbC".to_string(),
                 captcha_message_id: MessageId(10),
+                options: vec!["AbC".to_string(), "ZZZ".to_string()],
                 user_display: "User @user".to_string(),
                 chat_title: Some("Group".to_string()),
                 chat_username: Some("groupname".to_string()),

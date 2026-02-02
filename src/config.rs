@@ -39,6 +39,7 @@ pub struct Config {
     pub captcha_caption_update_secs: u64,
     pub captcha_width: u32,
     pub captcha_height: u32,
+    pub captcha_option_count: usize,
     pub log_enabled: bool,
     pub log_json: bool,
     pub log_level: LogLevel,
@@ -63,6 +64,7 @@ impl Config {
             parse_env_u64("CAPTCHA_CAPTION_UPDATE_SECONDS", 10, 2, 30, &mut warnings);
         let captcha_width = parse_env_u32("CAPTCHA_WIDTH", 220, 160, 400, &mut warnings);
         let captcha_height = parse_env_u32("CAPTCHA_HEIGHT", 100, 60, 200, &mut warnings);
+        let captcha_option_count = parse_env_usize("CAPTCHA_OPTION_COUNT", 6, 3, 12, &mut warnings);
         let log_enabled = parse_env_bool("LOG_ENABLED", true, &mut warnings);
         let log_json = parse_env_bool("LOG_JSON", false, &mut warnings);
         let log_level = env::var("LOG_LEVEL")
@@ -114,6 +116,7 @@ impl Config {
             captcha_caption_update_secs,
             captcha_width,
             captcha_height,
+            captcha_option_count,
             log_enabled,
             log_json,
             log_level,
