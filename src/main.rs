@@ -28,6 +28,7 @@ struct Config {
     log_json: bool,
     log_level: LogLevel,
     timezone: Tz,
+    config_warnings: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -67,6 +68,12 @@ struct PendingCaptcha {
 type CaptchaKey = (ChatId, UserId);
 type SharedState = Arc<Mutex<HashMap<CaptchaKey, PendingCaptcha>>>;
 
+enum CaptchaCheck {
+    NoPending,
+    Wrong,
+    Verified(PendingCaptcha),
+}
+
 #[tokio::main]
 async fn main() {
     if let Err(err) = run().await {
@@ -80,6 +87,24 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     let config = Arc::new(Config::from_env()?);
     let bot = Bot::new(config.token.clone());
 
+    log_system_level(
+        &config,
+        LogLevel::Info,
+        &format!(
+            "config: captcha_len={} timeout={}s update={}s size={}x{} log_json={} log_level={} timezone={}",
+            config.captcha_len,
+            config.captcha_timeout_secs,
+            config.captcha_caption_update_secs,
+            config.captcha_width,
+            config.captcha_height,
+            config.log_json,
+            config.log_level.as_str(),
+            config.timezone
+        ),
+    );
+    for warning in &config.config_warnings {
+        log_system_level(&config, LogLevel::Warn, warning);
+    }
     log_system(&config, "bot started");
 
     let state: SharedState = Arc::new(Mutex::new(HashMap::new()));
@@ -133,41 +158,30 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
 
 impl Config {
     fn from_env() -> Result<Self, Box<dyn Error + Send + Sync>> {
+        let mut warnings = Vec::new();
         let token = env::var("BOT_TOKEN")
             .or_else(|_| env::var("TELOXIDE_TOKEN"))
             .map_err(|_| "BOT_TOKEN or TELOXIDE_TOKEN is required")?;
-        let captcha_len = env::var("CAPTCHA_LEN")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(6);
-        let captcha_timeout_secs = env::var("CAPTCHA_TIMEOUT_SECONDS")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(120);
-        let captcha_caption_update_secs = env::var("CAPTCHA_CAPTION_UPDATE_SECONDS")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(5);
-        let captcha_width = env::var("CAPTCHA_WIDTH")
-            .ok()
-            .and_then(|v| v.parse::<u32>().ok())
-            .unwrap_or(220);
-        let captcha_height = env::var("CAPTCHA_HEIGHT")
-            .ok()
-            .and_then(|v| v.parse::<u32>().ok())
-            .unwrap_or(100);
-        let log_enabled = env::var("LOG_ENABLED")
-            .ok()
-            .map(|v| v.trim().eq_ignore_ascii_case("true"))
-            .unwrap_or(true);
-        let log_json = env::var("LOG_JSON")
-            .ok()
-            .map(|v| v.trim().eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
+        let captcha_len = parse_env_usize("CAPTCHA_LEN", 6, 4, 12, &mut warnings);
+        let captcha_timeout_secs =
+            parse_env_u64("CAPTCHA_TIMEOUT_SECONDS", 120, 30, 600, &mut warnings);
+        let captcha_caption_update_secs =
+            parse_env_u64("CAPTCHA_CAPTION_UPDATE_SECONDS", 10, 2, 30, &mut warnings);
+        let captcha_width = parse_env_u32("CAPTCHA_WIDTH", 220, 160, 400, &mut warnings);
+        let captcha_height = parse_env_u32("CAPTCHA_HEIGHT", 100, 60, 200, &mut warnings);
+        let log_enabled = parse_env_bool("LOG_ENABLED", true, &mut warnings);
+        let log_json = parse_env_bool("LOG_JSON", false, &mut warnings);
         let log_level = env::var("LOG_LEVEL")
             .ok()
-            .as_deref()
-            .map(parse_log_level)
+            .and_then(|v| {
+                parse_log_level(&v).or_else(|| {
+                    warnings.push(format!(
+                        "LOG_LEVEL invalid ('{}'), using INFO",
+                        sanitize_log_text(&v)
+                    ));
+                    None
+                })
+            })
             .unwrap_or(LogLevel::Info);
         let timezone = env::var("TIMEZONE")
             .ok()
@@ -185,6 +199,7 @@ impl Config {
             log_json,
             log_level,
             timezone,
+            config_warnings: warnings,
         })
     }
 }
@@ -456,17 +471,15 @@ async fn on_text(
     };
 
     let key = (msg.chat.id, user.id);
-    let pending = {
-        let guard = state.lock().await;
-        guard.get(&key).cloned()
+    let check = {
+        let mut guard = state.lock().await;
+        check_captcha_answer(&mut guard, key, &text)
     };
 
-    if let Some(pending) = pending {
-        let is_correct = text.eq_ignore_ascii_case(&pending.code);
-
-        let _ = bot.delete_message(msg.chat.id, msg.id).await;
-
-        if !is_correct {
+    match check {
+        CaptchaCheck::NoPending => {}
+        CaptchaCheck::Wrong => {
+            let _ = bot.delete_message(msg.chat.id, msg.id).await;
             let (chat_title, chat_username) = chat_context(&msg.chat);
             log_user_event_with_chat(
                 &config,
@@ -478,37 +491,34 @@ async fn on_text(
             );
             return Ok(());
         }
-
-        {
-            let mut guard = state.lock().await;
-            guard.remove(&key);
-        }
-
-        let _ = bot
-            .delete_message(msg.chat.id, pending.captcha_message_id)
-            .await;
-        if let Err(err) = restore_chat_permissions(&bot, msg.chat.id, user.id).await {
+        CaptchaCheck::Verified(pending) => {
+            let _ = bot.delete_message(msg.chat.id, msg.id).await;
+            let _ = bot
+                .delete_message(msg.chat.id, pending.captcha_message_id)
+                .await;
+            if let Err(err) = restore_chat_permissions(&bot, msg.chat.id, user.id).await {
+                let (chat_title, chat_username) = chat_context(&msg.chat);
+                log_telegram_error(
+                    &config,
+                    LogLevel::Error,
+                    msg.chat.id,
+                    chat_title.as_deref(),
+                    chat_username.as_deref(),
+                    "failed to restore user permissions",
+                    &err,
+                );
+            }
             let (chat_title, chat_username) = chat_context(&msg.chat);
-            log_telegram_error(
+            log_user_event_with_chat(
                 &config,
-                LogLevel::Error,
+                user,
                 msg.chat.id,
                 chat_title.as_deref(),
                 chat_username.as_deref(),
-                "failed to restore user permissions",
-                &err,
+                "==> ✅ captcha verified",
             );
+            return Ok(());
         }
-        let (chat_title, chat_username) = chat_context(&msg.chat);
-        log_user_event_with_chat(
-            &config,
-            user,
-            msg.chat.id,
-            chat_title.as_deref(),
-            chat_username.as_deref(),
-            "==> ✅ captcha verified",
-        );
-        return Ok(());
     }
 
     log_message(&config, &msg);
@@ -619,16 +629,134 @@ fn is_version_command(input: &str) -> bool {
     matches!(cmd, "/ver" | "/versi" | "/version")
 }
 
-fn parse_log_level(input: &str) -> LogLevel {
+fn parse_log_level(input: &str) -> Option<LogLevel> {
     match input.trim().to_ascii_lowercase().as_str() {
-        "warn" | "warning" => LogLevel::Warn,
-        "error" | "err" => LogLevel::Error,
-        _ => LogLevel::Info,
+        "info" => Some(LogLevel::Info),
+        "warn" | "warning" => Some(LogLevel::Warn),
+        "error" | "err" => Some(LogLevel::Error),
+        _ => None,
+    }
+}
+
+fn parse_env_usize(
+    name: &str,
+    default: usize,
+    min: usize,
+    max: usize,
+    warnings: &mut Vec<String>,
+) -> usize {
+    let Some(raw) = env::var(name).ok() else {
+        return default;
+    };
+    let Ok(value) = raw.trim().parse::<usize>() else {
+        warnings.push(format!(
+            "{} invalid ('{}'), using default {} (range {}..={})",
+            name,
+            sanitize_log_text(&raw),
+            default,
+            min,
+            max
+        ));
+        return default;
+    };
+    if !(min..=max).contains(&value) {
+        warnings.push(format!(
+            "{} out of range ({}), using default {} (range {}..={})",
+            name, value, default, min, max
+        ));
+        return default;
+    }
+    value
+}
+
+fn parse_env_u64(name: &str, default: u64, min: u64, max: u64, warnings: &mut Vec<String>) -> u64 {
+    let Some(raw) = env::var(name).ok() else {
+        return default;
+    };
+    let Ok(value) = raw.trim().parse::<u64>() else {
+        warnings.push(format!(
+            "{} invalid ('{}'), using default {} (range {}..={})",
+            name,
+            sanitize_log_text(&raw),
+            default,
+            min,
+            max
+        ));
+        return default;
+    };
+    if !(min..=max).contains(&value) {
+        warnings.push(format!(
+            "{} out of range ({}), using default {} (range {}..={})",
+            name, value, default, min, max
+        ));
+        return default;
+    }
+    value
+}
+
+fn parse_env_u32(name: &str, default: u32, min: u32, max: u32, warnings: &mut Vec<String>) -> u32 {
+    let Some(raw) = env::var(name).ok() else {
+        return default;
+    };
+    let Ok(value) = raw.trim().parse::<u32>() else {
+        warnings.push(format!(
+            "{} invalid ('{}'), using default {} (range {}..={})",
+            name,
+            sanitize_log_text(&raw),
+            default,
+            min,
+            max
+        ));
+        return default;
+    };
+    if !(min..=max).contains(&value) {
+        warnings.push(format!(
+            "{} out of range ({}), using default {} (range {}..={})",
+            name, value, default, min, max
+        ));
+        return default;
+    }
+    value
+}
+
+fn parse_env_bool(name: &str, default: bool, warnings: &mut Vec<String>) -> bool {
+    let Some(raw) = env::var(name).ok() else {
+        return default;
+    };
+    let normalized = raw.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "true" | "1" | "yes" | "y" => true,
+        "false" | "0" | "no" | "n" => false,
+        _ => {
+            warnings.push(format!(
+                "{} invalid ('{}'), using default {}",
+                name,
+                sanitize_log_text(&raw),
+                default
+            ));
+            default
+        }
     }
 }
 
 fn log_enabled_at(config: &Config, level: LogLevel) -> bool {
     config.log_enabled && level >= config.log_level
+}
+
+fn check_captcha_answer(
+    state: &mut HashMap<CaptchaKey, PendingCaptcha>,
+    key: CaptchaKey,
+    text: &str,
+) -> CaptchaCheck {
+    let Some(pending) = state.get(&key).cloned() else {
+        return CaptchaCheck::NoPending;
+    };
+    if text.eq_ignore_ascii_case(&pending.code) {
+        state.remove(&key);
+        CaptchaCheck::Verified(pending)
+    } else {
+        CaptchaCheck::Wrong
+    }
 }
 
 fn log_message(config: &Config, msg: &Message) {
@@ -666,13 +794,17 @@ fn chat_context(chat: &Chat) -> (Option<String>, Option<String>) {
 }
 
 fn log_system(config: &Config, text: &str) {
-    if !log_enabled_at(config, LogLevel::Info) {
+    log_system_level(config, LogLevel::Info, text);
+}
+
+fn log_system_level(config: &Config, level: LogLevel, text: &str) {
+    if !log_enabled_at(config, level) {
         return;
     }
     let tz_now = now_in_timezone(config.timezone);
     let ts = tz_now.format("%Y-%m-%d %H:%M:%S%.6f").to_string();
     log_line(
-        LogLevel::Info,
+        level,
         config.log_json,
         &ts,
         "system",
@@ -787,6 +919,28 @@ fn log_line<T: std::fmt::Display>(
         println!("{payload}");
         return;
     }
+    println!(
+        "{}",
+        render_log_header(level, ts, &chat_id.to_string(), title, chat_username)
+    );
+    if let Some(user_context) = user_context {
+        log_sub_line(&format!("({}) {}", user_context, message));
+    } else {
+        log_sub_line(message);
+    }
+}
+
+fn log_sub_line(message: &str) {
+    println!("{}", render_log_sub_line(message));
+}
+
+fn render_log_header(
+    level: LogLevel,
+    ts: &str,
+    chat_id: &str,
+    title: Option<&str>,
+    chat_username: Option<&str>,
+) -> String {
     let mut detail = String::new();
     if let Some(title) = title {
         detail.push_str(" : ");
@@ -804,7 +958,7 @@ fn log_line<T: std::fmt::Display>(
     let level_color = level.color();
     let level_label = level.as_str();
     if detail.is_empty() {
-        println!(
+        format!(
             "{}[{}]{} {}{}{} {}{}{}",
             color_cyan(),
             ts,
@@ -815,9 +969,9 @@ fn log_line<T: std::fmt::Display>(
             color_yellow(),
             chat_id,
             color_reset()
-        );
+        )
     } else {
-        println!(
+        format!(
             "{}[{}]{} {}{}{} {}{}{} {}{}",
             color_cyan(),
             ts,
@@ -830,16 +984,11 @@ fn log_line<T: std::fmt::Display>(
             color_reset(),
             detail,
             color_reset()
-        );
-    }
-    if let Some(user_context) = user_context {
-        log_sub_line(&format!("({}) {}", user_context, message));
-    } else {
-        log_sub_line(message);
+        )
     }
 }
 
-fn log_sub_line(message: &str) {
+fn render_log_sub_line(message: &str) -> String {
     if let Some(close_idx) = message.find(')') {
         let (context_with_paren, rest) = message.split_at(close_idx + 1);
         let rest = rest.trim_start();
@@ -881,7 +1030,7 @@ fn log_sub_line(message: &str) {
             context_rendered.push_str(username_part.trim());
             context_rendered.push_str(color_reset());
         }
-        println!(
+        return format!(
             "{}  └ ({}) {}{}{}",
             color_white(),
             context_rendered,
@@ -889,9 +1038,8 @@ fn log_sub_line(message: &str) {
             rest,
             color_reset()
         );
-        return;
     }
-    println!("{}  └ {}{}", color_white(), message, color_reset());
+    format!("{}  └ {}{}", color_white(), message, color_reset())
 }
 
 fn now_in_timezone(tz: Tz) -> DateTime<Tz> {
@@ -1078,4 +1226,64 @@ fn color_gray() -> &'static str {
 
 fn color_reset() -> &'static str {
     "\x1b[0m"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_log_text_removes_control_chars() {
+        let input = "hi\nthere\u{200B}";
+        let out = sanitize_log_text(input);
+        assert_eq!(out, "hithere");
+    }
+
+    #[test]
+    fn render_log_header_includes_colors_and_context() {
+        let out = render_log_header(
+            LogLevel::Warn,
+            "2020-01-01 00:00:00.000000",
+            "123",
+            Some("Group"),
+            Some("groupname"),
+        );
+        assert!(out.contains(color_magenta()));
+        assert!(out.contains(color_blue()));
+        assert!(out.contains("WARN"));
+        assert!(out.contains("Group"));
+        assert!(out.contains("@groupname"));
+    }
+
+    #[test]
+    fn render_log_sub_line_formats_user_context() {
+        let out = render_log_sub_line("(123:Name @user) hello");
+        assert!(out.contains(color_gray()));
+        assert!(out.contains(color_magenta()));
+        assert!(out.contains(color_blue()));
+        assert!(out.contains("hello"));
+    }
+
+    #[test]
+    fn check_captcha_answer_marks_verified_and_removes() {
+        let mut state: HashMap<CaptchaKey, PendingCaptcha> = HashMap::new();
+        let key = (ChatId(1), UserId(2));
+        state.insert(
+            key,
+            PendingCaptcha {
+                code: "AbC".to_string(),
+                captcha_message_id: MessageId(10),
+                user_display: "User @user".to_string(),
+                chat_title: Some("Group".to_string()),
+                chat_username: Some("groupname".to_string()),
+            },
+        );
+        let wrong = check_captcha_answer(&mut state, key, "nope");
+        assert!(matches!(wrong, CaptchaCheck::Wrong));
+        assert!(state.contains_key(&key));
+
+        let verified = check_captcha_answer(&mut state, key, "aBc");
+        assert!(matches!(verified, CaptchaCheck::Verified(_)));
+        assert!(!state.contains_key(&key));
+    }
 }

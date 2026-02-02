@@ -12,7 +12,7 @@ dan hak akses user dipulihkan.
 - Panjang teks CAPTCHA dapat diatur lewat `.env`.
 - User baru bergabung akan dibatasi hanya boleh kirim teks saja
 - Timeout verifikasi (default 120 detik), bisa disesuaikan sendiri.
-- Interval update caption (default 5 detik), bisa disesuaikan sendiri.
+- Interval update caption (default 10 detik), bisa disesuaikan sendiri.
 - Jawaban benar: hapus pesan CAPTCHA + pesan jawaban.
 - Jawaban salah terhapus, jika timeout: kick user dari grup.
 - User terverifikasi, hak akses grup dipulihkan.
@@ -52,10 +52,12 @@ Isi `.env`:
 BOT_TOKEN=your-telegram-bot-token
 CAPTCHA_LEN=6
 CAPTCHA_TIMEOUT_SECONDS=120
-CAPTCHA_CAPTION_UPDATE_SECONDS=5
+CAPTCHA_CAPTION_UPDATE_SECONDS=10
 CAPTCHA_WIDTH=220
 CAPTCHA_HEIGHT=100
 LOG_ENABLED=true
+LOG_JSON=false
+LOG_LEVEL=info
 TIMEZONE=Asia/Jakarta
 ```
 
@@ -63,9 +65,11 @@ Keterangan variabel:
 - `BOT_TOKEN`: token bot Telegram.
 - `CAPTCHA_LEN`: panjang karakter CAPTCHA.
 - `CAPTCHA_TIMEOUT_SECONDS`: waktu maksimum menebak.
-- `CAPTCHA_CAPTION_UPDATE_SECONDS`: interval update caption countdown.
+- `CAPTCHA_CAPTION_UPDATE_SECONDS`: interval update caption countdown (default 10 detik).
 - `CAPTCHA_WIDTH` / `CAPTCHA_HEIGHT`: ukuran gambar CAPTCHA.
 - `LOG_ENABLED`: `true` untuk tampilkan log, `false` untuk nonaktif.
+- `LOG_JSON`: `true` untuk output log JSON, `false` untuk log berwarna.
+- `LOG_LEVEL`: `info`, `warn`, atau `error` (default `info`).
 - `TIMEZONE`: zona waktu log, default `Asia/Jakarta`.
 
 ## Perintah Bot (Private)
@@ -147,7 +151,7 @@ docker compose up -d
 Override nilai `.env` saat menjalankan:
 
 ```bash
-BOT_TOKEN=your-telegram-bot-token CAPTCHA_TIMEOUT_SECONDS=180 CAPTCHA_CAPTION_UPDATE_SECONDS=5 docker compose up -d
+BOT_TOKEN=your-telegram-bot-token CAPTCHA_TIMEOUT_SECONDS=180 CAPTCHA_CAPTION_UPDATE_SECONDS=10 docker compose up -d
 ```
 
 ## Cara Kerja Singkat
