@@ -178,6 +178,7 @@ Untuk mode webhook via Docker Compose, lihat [`WEBHOOK.md`](./WEBHOOK.md) dan co
 - State verifikasi disimpan di memori. Jika bot restart, state pending akan hilang.
 - Untuk keamanan, jangan commit file `.env` ke repo.
 - Pastikan bot punya izin admin di grup sesuai daftar di bagian "Persyaratan".
+- Jika memakai webhook lewat proxy SSL (misalnya Cloudflare) dan tombol inline tidak merespons, pastikan header `X-Telegram-Bot-Api-Secret-Token` diteruskan. Jika tidak bisa, kosongkan `WEBHOOK_SECRET_TOKEN` untuk sementara.
 
 ## Credit
 - Hasanudin H Syafaat @hasanudinhs
