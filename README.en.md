@@ -73,7 +73,7 @@ Environment variables:
 - `CAPTCHA_WIDTH` / `CAPTCHA_HEIGHT`: CAPTCHA image size.
 - `CAPTCHA_OPTION_COUNT`: number of answer buttons (default 6).
 - `CAPTCHA_ATTEMPTS`: number of attempts (default 3).
-- `CAPTCHA_OPTION_DIGITS_TO_EMOJI`: convert digits on buttons to emoji (default `true`).
+- `CAPTCHA_OPTION_DIGITS_TO_EMOJI`: convert digits and A/B on buttons to emoji (A→🅰️, B→🅱️, AB→🆎) (default `true`).
 - `DELETE_JOIN_MESSAGE`: delete join messages (default true).
 - `DELETE_LEFT_MESSAGE`: delete left messages (default true).
 - `LOG_ENABLED`: `true` to enable logs, `false` to disable.

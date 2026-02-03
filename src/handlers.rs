@@ -693,10 +693,20 @@ fn escape_markdown_v2(input: &str) -> String {
     out
 }
 
-fn digits_to_keycap_emoji(input: &str) -> String {
+fn option_to_display(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
-    for ch in input.chars() {
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
         match ch {
+            'A' | 'a' => {
+                if matches!(chars.peek(), Some('B') | Some('b')) {
+                    chars.next();
+                    out.push_str("🆎");
+                } else {
+                    out.push_str("🅰️");
+                }
+            }
+            'B' | 'b' => out.push_str("🅱️"),
             '0' => out.push_str("0️⃣"),
             '1' => out.push_str("1️⃣"),
             '2' => out.push_str("2️⃣"),
@@ -720,9 +730,12 @@ fn build_captcha_keyboard(options: &[String], digits_to_emoji: bool) -> InlineKe
             chunk
                 .iter()
                 .map(|option| {
-                    let display = if digits_to_emoji && option.chars().any(|ch| ch.is_ascii_digit())
+                    let display = if digits_to_emoji
+                        && option
+                            .chars()
+                            .any(|ch| ch.is_ascii_digit() || matches!(ch, 'A' | 'a' | 'B' | 'b'))
                     {
-                        digits_to_keycap_emoji(option)
+                        option_to_display(option)
                     } else {
                         option.to_string()
                     };

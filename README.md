@@ -78,7 +78,7 @@ Keterangan variabel:
 - `CAPTCHA_WIDTH` / `CAPTCHA_HEIGHT`: ukuran gambar CAPTCHA.
 - `CAPTCHA_OPTION_COUNT`: jumlah tombol pilihan jawaban (default 6).
 - `CAPTCHA_ATTEMPTS`: jumlah kesempatan menjawab (default 3).
-- `CAPTCHA_OPTION_DIGITS_TO_EMOJI`: ubah digit di tombol jadi emoji (default `true`).
+- `CAPTCHA_OPTION_DIGITS_TO_EMOJI`: ubah digit dan huruf A/B di tombol jadi emoji (A→🅰️, B→🅱️, AB→🆎) (default `true`).
 - `DELETE_JOIN_MESSAGE`: hapus pesan join Telegram saat user masuk (default true).
 - `DELETE_LEFT_MESSAGE`: hapus pesan left Telegram saat user keluar (default true).
 - `LOG_ENABLED`: `true` untuk tampilkan log, `false` untuk nonaktif.
