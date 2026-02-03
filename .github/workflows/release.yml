@@ -158,7 +158,7 @@ jobs:
   trigger-docker:
     needs: [resolve-version, release]
     runs-on: ubuntu-latest
-    if: ${{ inputs.run_docker }}
+    if: ${{ inputs.run_docker && needs.release.result == 'success' }}
     steps:
       - name: Trigger Docker workflow
         uses: actions/github-script@v7
@@ -170,3 +170,12 @@ jobs:
               workflow_id: "docker.yml",
               ref: context.ref.replace("refs/heads/", ""),
             });
+
+  docker-skip-note:
+    needs: [resolve-version, release]
+    runs-on: ubuntu-latest
+    if: ${{ inputs.run_docker && needs.release.result != 'success' }}
+    steps:
+      - name: Docker build skipped
+        run: |
+          echo "Release failed; Docker build workflow will not be triggered."
