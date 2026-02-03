@@ -28,12 +28,19 @@ dan hak akses user dipulihkan.
 
 ## Menjalankan dari Release
 
-1) Unduh file release sesuai OS/arsitektur:
-   - `buktikanbot-<versi>-x86_64-unknown-linux-gnu.tar.gz`
-   - `buktikanbot-<versi>-aarch64-unknown-linux-gnu.tar.gz`
-   - `buktikanbot-<versi>-x86_64-apple-darwin.tar.gz`
-   - `buktikanbot-<versi>-aarch64-apple-darwin.tar.gz`
-   - `buktikanbot-<versi>-x86_64-pc-windows-msvc.zip`
+Info perubahan versi ada di halaman [Release][releases].
+
+1) Unduh file release sesuai OS/arsitektur (pilih yang cocok dengan sistem kamu):
+   - Linux 64-bit Intel/AMD: `x86_64-unknown-linux-gnu`
+   - Linux 64-bit ARM (mis. server ARM/Raspberry Pi 64-bit): `aarch64-unknown-linux-gnu`
+   - macOS Intel: `x86_64-apple-darwin`
+   - macOS Apple Silicon (M1/M2/M3): `aarch64-apple-darwin`
+   - Windows 64-bit: `x86_64-pc-windows-msvc`
+   
+   Cara cek arsitektur:
+   - Windows (PowerShell): `wmic os get osarchitecture`
+   - macOS (Terminal): `uname -m`
+   - Linux (Terminal): `uname -m`
 
 2) Ekstrak dan jalankan:
    - Linux/macOS:
@@ -48,7 +55,10 @@ dan hak akses user dipulihkan.
      ```
 
 ## Konfigurasi
-Isi `.env`:
+Salin dulu `.env.example` menjadi `.env`, lalu isi nilainya:
+- Linux/macOS (Terminal): `cp .env.example .env`
+- Windows (PowerShell): `Copy-Item .env.example .env`
+File `.env.example` ada di root repo.
 
 ```env
 BOT_TOKEN=your-telegram-bot-token
@@ -100,6 +110,8 @@ Catatan Docker: jika memakai image Docker, contoh env bisa ditemukan di
 - `/ver`, `/versi`, `/version`: info versi aplikasi.
 
 ## Versioning
+
+Info perubahan versi dapat dilihat di halaman [Release][releases].
 
 Cek versi saat ini:
 
@@ -197,3 +209,5 @@ Untuk mode webhook via Docker Compose, lihat [`WEBHOOK.md`](./WEBHOOK.md) dan co
 - https://banghasan.com
 
 Diskusi dan support di grup Telegram [@botindonesia](https://t.me/botindonesia).
+
+[releases]: https://github.com/banghasan/telegram-buktikanbot/releases

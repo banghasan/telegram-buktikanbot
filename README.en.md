@@ -23,12 +23,19 @@ A Telegram bot that verifies new group members using an image CAPTCHA. When a us
 
 ## Running from Release
 
-1) Download the release file for your OS/architecture:
-   - `buktikanbot-<version>-x86_64-unknown-linux-gnu.tar.gz`
-   - `buktikanbot-<version>-aarch64-unknown-linux-gnu.tar.gz`
-   - `buktikanbot-<version>-x86_64-apple-darwin.tar.gz`
-   - `buktikanbot-<version>-aarch64-apple-darwin.tar.gz`
-   - `buktikanbot-<version>-x86_64-pc-windows-msvc.zip`
+Version change details are available on the [Release][releases] page.
+
+1) Download the release file for your OS/architecture (pick what matches your system):
+   - Linux 64-bit Intel/AMD: `x86_64-unknown-linux-gnu`
+   - Linux 64-bit ARM (e.g., ARM servers/Raspberry Pi 64-bit): `aarch64-unknown-linux-gnu`
+   - macOS Intel: `x86_64-apple-darwin`
+   - macOS Apple Silicon (M1/M2/M3): `aarch64-apple-darwin`
+   - Windows 64-bit: `x86_64-pc-windows-msvc` 
+
+   How to check your architecture:
+   - Windows (PowerShell): `wmic os get osarchitecture`
+   - macOS (Terminal): `uname -m`
+   - Linux (Terminal): `uname -m`
 
 2) Extract and run:
    - Linux/macOS:
@@ -43,7 +50,10 @@ A Telegram bot that verifies new group members using an image CAPTCHA. When a us
      ```
 
 ## Configuration
-Create `.env`:
+Copy `.env.example` to `.env` first, then fill the values:
+- Linux/macOS (Terminal): `cp .env.example .env`
+- Windows (PowerShell): `Copy-Item .env.example .env`
+The `.env.example` file is in the repo root.
 
 ```env
 BOT_TOKEN=your-telegram-bot-token
@@ -95,6 +105,8 @@ Docker note: if you use the Docker image, the sample env file is located at
 - `/ver`, `/versi`, `/version`: app version info.
 
 ## Versioning
+
+Version change details are available on the [Release][releases] page.
 
 Check current version:
 
@@ -192,3 +204,5 @@ For webhook mode via Docker Compose, see [`WEBHOOK.md`](./WEBHOOK.md) and the ex
 - https://banghasan.com
 
 Discussion and support in Telegram group [@botindonesia](https://t.me/botindonesia).
+
+[releases]: https://github.com/banghasan/telegram-buktikanbot/releases
