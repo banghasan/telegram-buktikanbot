@@ -151,7 +151,7 @@ async fn start_captcha_for_user(
         config.captcha_attempts,
     );
     let options = generate_captcha_options(&code, config.captcha_option_count);
-    let keyboard = build_captcha_keyboard(&options);
+    let keyboard = build_captcha_keyboard(&options, config.captcha_option_digits_to_emoji);
     let sent = bot
         .send_photo(chat_id, InputFile::memory(png))
         .caption(caption)
@@ -224,7 +224,10 @@ async fn start_captcha_for_user(
                     .edit_message_caption(chat_id, captcha_message_id)
                     .caption(caption)
                     .parse_mode(ParseMode::Html)
-                    .reply_markup(build_captcha_keyboard(&options))
+                    .reply_markup(build_captcha_keyboard(
+                        &options,
+                        config_clone.captcha_option_digits_to_emoji,
+                    ))
                     .await;
             }
         }
@@ -534,7 +537,10 @@ pub async fn on_callback_query(
                     .edit_message_caption(chat_id, message.id)
                     .caption(caption)
                     .parse_mode(ParseMode::Html)
-                    .reply_markup(build_captcha_keyboard(&options))
+                    .reply_markup(build_captcha_keyboard(
+                        &options,
+                        config.captcha_option_digits_to_emoji,
+                    ))
                     .await;
                 let _ = bot
                     .answer_callback_query(id)
@@ -667,14 +673,19 @@ fn digits_to_keycap_emoji(input: &str) -> String {
     out
 }
 
-fn build_captcha_keyboard(options: &[String]) -> InlineKeyboardMarkup {
+fn build_captcha_keyboard(options: &[String], digits_to_emoji: bool) -> InlineKeyboardMarkup {
     let rows: Vec<Vec<InlineKeyboardButton>> = options
         .chunks(3)
         .map(|chunk| {
             chunk
                 .iter()
                 .map(|option| {
-                    let display = digits_to_keycap_emoji(option);
+                    let display = if digits_to_emoji && option.chars().any(|ch| ch.is_ascii_digit())
+                    {
+                        digits_to_keycap_emoji(option)
+                    } else {
+                        option.to_string()
+                    };
                     InlineKeyboardButton::callback(display, format!("captcha:{option}"))
                 })
                 .collect()

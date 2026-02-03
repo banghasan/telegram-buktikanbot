@@ -41,6 +41,7 @@ pub struct Config {
     pub captcha_height: u32,
     pub captcha_option_count: usize,
     pub captcha_attempts: usize,
+    pub captcha_option_digits_to_emoji: bool,
     pub delete_join_message: bool,
     pub delete_left_message: bool,
     pub log_enabled: bool,
@@ -71,6 +72,8 @@ impl Config {
         let captcha_height = parse_env_u32("CAPTCHA_HEIGHT", 100, 60, 200, &mut warnings);
         let captcha_option_count = parse_env_usize("CAPTCHA_OPTION_COUNT", 6, 3, 12, &mut warnings);
         let captcha_attempts = parse_env_usize("CAPTCHA_ATTEMPTS", 3, 1, 10, &mut warnings);
+        let captcha_option_digits_to_emoji =
+            parse_env_bool("CAPTCHA_OPTION_DIGITS_TO_EMOJI", true, &mut warnings);
         let delete_join_message = parse_env_bool("DELETE_JOIN_MESSAGE", true, &mut warnings);
         let delete_left_message = parse_env_bool("DELETE_LEFT_MESSAGE", true, &mut warnings);
         let log_enabled = parse_env_bool("LOG_ENABLED", true, &mut warnings);
@@ -136,6 +139,7 @@ impl Config {
             captcha_height,
             captcha_option_count,
             captcha_attempts,
+            captcha_option_digits_to_emoji,
             delete_join_message,
             delete_left_message,
             log_enabled,

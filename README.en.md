@@ -50,10 +50,11 @@ BOT_TOKEN=your-telegram-bot-token
 CAPTCHA_LEN=6
 CAPTCHA_TIMEOUT_SECONDS=120
 CAPTCHA_CAPTION_UPDATE_SECONDS=10
-CAPTCHA_WIDTH=220
+CAPTCHA_WIDTH=400
 CAPTCHA_HEIGHT=100
 CAPTCHA_OPTION_COUNT=6
 CAPTCHA_ATTEMPTS=3
+CAPTCHA_OPTION_DIGITS_TO_EMOJI=true
 DELETE_JOIN_MESSAGE=true
 DELETE_LEFT_MESSAGE=true
 LOG_ENABLED=true
@@ -72,6 +73,7 @@ Environment variables:
 - `CAPTCHA_WIDTH` / `CAPTCHA_HEIGHT`: CAPTCHA image size.
 - `CAPTCHA_OPTION_COUNT`: number of answer buttons (default 6).
 - `CAPTCHA_ATTEMPTS`: number of attempts (default 3).
+- `CAPTCHA_OPTION_DIGITS_TO_EMOJI`: convert digits on buttons to emoji (default `true`).
 - `DELETE_JOIN_MESSAGE`: delete join messages (default true).
 - `DELETE_LEFT_MESSAGE`: delete left messages (default true).
 - `LOG_ENABLED`: `true` to enable logs, `false` to disable.
