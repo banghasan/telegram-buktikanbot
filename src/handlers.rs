@@ -2,6 +2,7 @@ use std::error::Error;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use chrono::Utc;
 use teloxide::prelude::*;
 use teloxide::types::{
     CallbackQuery, ChatMemberStatus, ChatMemberUpdated, ChatPermissions, InlineKeyboardButton,
@@ -17,6 +18,7 @@ use crate::logging::{
     chat_context, log_message, log_telegram_error, log_user_event_by_display,
     log_user_event_with_chat,
 };
+use crate::utils::{escape_html, sanitize_log_text};
 
 pub async fn on_new_members(
     bot: Bot,
@@ -267,6 +269,16 @@ async fn start_captcha_for_user(
                 &pending.user_display,
                 "-> 🏌🏻‍♂️captcha timeout, user banned",
             );
+            send_captcha_log_if_enabled(
+                &bot_clone,
+                &config_clone,
+                &user_clone,
+                chat_id,
+                pending.chat_title.as_deref(),
+                pending.chat_username.as_deref(),
+                false,
+            )
+            .await;
         }
     });
 
@@ -499,6 +511,16 @@ pub async fn on_callback_query(
                             &pending.user_display,
                             "-> 🧨 captcha attempts exceeded, user banned",
                         );
+                        send_captcha_log_if_enabled(
+                            &bot,
+                            &config,
+                            &from,
+                            chat_id,
+                            pending.chat_title.as_deref(),
+                            pending.chat_username.as_deref(),
+                            false,
+                        )
+                        .await;
                     }
                     let _ = bot
                         .answer_callback_query(id)
@@ -560,6 +582,16 @@ pub async fn on_callback_query(
                 chat_username.as_deref(),
                 "==> ✅ captcha verified (button)",
             );
+            send_captcha_log_if_enabled(
+                &bot,
+                &config,
+                &from,
+                chat_id,
+                chat_title.as_deref(),
+                chat_username.as_deref(),
+                true,
+            )
+            .await;
         }
     }
 
@@ -628,4 +660,76 @@ fn build_captcha_keyboard(options: &[String]) -> InlineKeyboardMarkup {
         })
         .collect();
     InlineKeyboardMarkup::new(rows)
+}
+
+async fn send_captcha_log_if_enabled(
+    bot: &Bot,
+    config: &Config,
+    user: &teloxide::types::User,
+    chat_id: ChatId,
+    chat_title: Option<&str>,
+    chat_username: Option<&str>,
+    success: bool,
+) {
+    if !config.captcha_log_enabled {
+        return;
+    }
+    let Some(target_id) = config.captcha_log_chat_id else {
+        return;
+    };
+
+    let tz_now = Utc::now().with_timezone(&config.timezone);
+    let ts = tz_now.format("%Y-%m-%d %H:%M:%S").to_string();
+
+    let first_name = sanitize_log_text(user.first_name.trim());
+    let last_name = sanitize_log_text(user.last_name.as_deref().unwrap_or("").trim());
+    let full_name = if last_name.is_empty() {
+        first_name
+    } else {
+        format!("{first_name} {last_name}")
+    };
+    let full_name = escape_html(&full_name);
+
+    let username_line = user.username.as_deref().map(|raw| {
+        let username = escape_html(&sanitize_log_text(raw.trim()));
+        format!(" ├👤 @{username}")
+    });
+
+    let group_label = match (chat_username, chat_title) {
+        (Some(username), Some(title)) => format!("@{} : {}", username.trim(), title.trim()),
+        (Some(username), None) => format!("@{}", username.trim()),
+        (None, Some(title)) => title.trim().to_string(),
+        (None, None) => "unknown".to_string(),
+    };
+    let group_label = escape_html(&sanitize_log_text(&group_label));
+
+    let result = if success { "✅ sukses" } else { "🚫 gagal" };
+
+    let mut lines = Vec::with_capacity(6);
+    lines.push("🪵 Captcha Log".to_string());
+    lines.push(format!(" ├⏱️ <code>{}</code>", escape_html(&ts)));
+    lines.push(format!(" ├🙋🏽 {}", full_name));
+    if let Some(line) = username_line {
+        lines.push(line);
+    }
+    lines.push(format!(" ├👥 {}", group_label));
+    lines.push(format!(" └{}", result));
+    let message = lines.join("\n");
+
+    if let Err(err) = bot
+        .send_message(ChatId(target_id), message)
+        .parse_mode(ParseMode::Html)
+        .disable_web_page_preview(true)
+        .await
+    {
+        log_telegram_error(
+            config,
+            LogLevel::Warn,
+            chat_id,
+            chat_title,
+            chat_username,
+            "failed to send captcha log",
+            &err,
+        );
+    }
 }

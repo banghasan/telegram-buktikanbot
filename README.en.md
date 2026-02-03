@@ -59,6 +59,8 @@ DELETE_LEFT_MESSAGE=true
 LOG_ENABLED=true
 LOG_JSON=false
 LOG_LEVEL=info
+CAPTCHA_LOG_ENABLED=false
+CAPTCHA_LOG_CHAT_ID=
 TIMEZONE=Asia/Jakarta
 ```
 
@@ -75,6 +77,8 @@ Environment variables:
 - `LOG_ENABLED`: `true` to enable logs, `false` to disable.
 - `LOG_JSON`: `true` for JSON logs, `false` for colored logs.
 - `LOG_LEVEL`: `info`, `warn`, or `error` (default `info`).
+- `CAPTCHA_LOG_ENABLED`: `true` to send captcha logs to a target chat, `false` to disable (default `false`).
+- `CAPTCHA_LOG_CHAT_ID`: target chat/group/channel ID for captcha logs.
 - `TIMEZONE`: log timezone (default `Asia/Jakarta`).
 - `RUN_MODE`: `polling` (default) or `webhook`.
 

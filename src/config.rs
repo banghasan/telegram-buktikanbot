@@ -46,6 +46,8 @@ pub struct Config {
     pub log_enabled: bool,
     pub log_json: bool,
     pub log_level: LogLevel,
+    pub captcha_log_enabled: bool,
+    pub captcha_log_chat_id: Option<i64>,
     pub timezone: Tz,
     pub config_warnings: Vec<String>,
     pub run_mode: RunMode,
@@ -85,6 +87,8 @@ impl Config {
                 })
             })
             .unwrap_or(LogLevel::Info);
+        let mut captcha_log_enabled = parse_env_bool("CAPTCHA_LOG_ENABLED", false, &mut warnings);
+        let captcha_log_chat_id = parse_env_i64("CAPTCHA_LOG_CHAT_ID", &mut warnings);
         let run_mode = match env::var("RUN_MODE").ok() {
             Some(raw) => parse_run_mode(&raw).ok_or_else(|| {
                 format!(
@@ -111,6 +115,14 @@ impl Config {
             .and_then(|v| Tz::from_str(v.trim()).ok())
             .unwrap_or(chrono_tz::Asia::Jakarta);
 
+        if captcha_log_enabled && captcha_log_chat_id.is_none() {
+            captcha_log_enabled = false;
+            warnings.push(
+                "CAPTCHA_LOG_ENABLED true but CAPTCHA_LOG_CHAT_ID is missing or invalid; disabled"
+                    .to_string(),
+            );
+        }
+
         if matches!(run_mode, RunMode::Webhook) && webhook_url.is_none() {
             return Err("WEBHOOK_URL is required for webhook mode".into());
         }
@@ -129,6 +141,8 @@ impl Config {
             log_enabled,
             log_json,
             log_level,
+            captcha_log_enabled,
+            captcha_log_chat_id,
             timezone,
             config_warnings: warnings,
             run_mode,
@@ -253,6 +267,35 @@ fn parse_env_bool(name: &str, default: bool, warnings: &mut Vec<String>) -> bool
                 default
             ));
             default
+        }
+    }
+}
+
+fn parse_env_i64(name: &str, warnings: &mut Vec<String>) -> Option<i64> {
+    let Some(raw) = env::var(name).ok() else {
+        return None;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        warnings.push(format!("{} empty, ignoring", name));
+        return None;
+    }
+    match trimmed.parse::<i64>() {
+        Ok(value) => {
+            if value == 0 {
+                warnings.push(format!("{} invalid (0), ignoring", name));
+                None
+            } else {
+                Some(value)
+            }
+        }
+        Err(_) => {
+            warnings.push(format!(
+                "{} invalid ('{}'), ignoring",
+                name,
+                sanitize_log_text(&raw)
+            ));
+            None
         }
     }
 }

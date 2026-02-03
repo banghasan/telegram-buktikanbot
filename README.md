@@ -64,6 +64,8 @@ DELETE_LEFT_MESSAGE=true
 LOG_ENABLED=true
 LOG_JSON=false
 LOG_LEVEL=info
+CAPTCHA_LOG_ENABLED=false
+CAPTCHA_LOG_CHAT_ID=
 TIMEZONE=Asia/Jakarta
 ```
 
@@ -80,6 +82,8 @@ Keterangan variabel:
 - `LOG_ENABLED`: `true` untuk tampilkan log, `false` untuk nonaktif.
 - `LOG_JSON`: `true` untuk output log JSON, `false` untuk log berwarna.
 - `LOG_LEVEL`: `info`, `warn`, atau `error` (default `info`).
+- `CAPTCHA_LOG_ENABLED`: `true` untuk kirim log captcha ke chat tertentu, `false` untuk nonaktif (default `false`).
+- `CAPTCHA_LOG_CHAT_ID`: ID chat/grup/channel tujuan log captcha.
 - `TIMEZONE`: zona waktu log, default `Asia/Jakarta`.
 - `RUN_MODE`: `polling` (default) atau `webhook`.
 

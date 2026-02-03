@@ -32,7 +32,7 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let version_line = format!("(system) version: {}", env!("CARGO_PKG_VERSION"));
     let config_line = format!(
-        "(system) config: captcha_len={} timeout={}s update={}s size={}x{} options={} attempts={} delete_join_message={} delete_left_message={} log_json={} log_level={} timezone={} run_mode={}",
+        "(system) config: captcha_len={} timeout={}s update={}s size={}x{} options={} attempts={} delete_join_message={} delete_left_message={} log_json={} log_level={} captcha_log_enabled={} captcha_log_chat_id={} timezone={} run_mode={}",
         config.captcha_len,
         config.captcha_timeout_secs,
         config.captcha_caption_update_secs,
@@ -44,6 +44,11 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         config.delete_left_message,
         config.log_json,
         config.log_level.as_str(),
+        config.captcha_log_enabled,
+        config
+            .captcha_log_chat_id
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "-".to_string()),
         config.timezone,
         match config.run_mode {
             RunMode::Polling => "polling",
