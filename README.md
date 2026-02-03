@@ -91,6 +91,9 @@ Keterangan variabel:
 
 Jika ingin menjalankan mode webhook, lihat panduan lengkap di [`WEBHOOK.md`](./WEBHOOK.md).
 
+Catatan Docker: jika memakai image Docker, contoh env bisa ditemukan di
+`/usr/local/share/telegram-buktikanbot/.env.example`.
+
 ## Perintah Bot (Private)
 - `/start`: info bot.
 - `/ping`: cek response time.

@@ -22,6 +22,10 @@ RUN set -eux; \
     curl -fL "$url" -o /tmp/bot.tar.gz; \
     tar -xzf /tmp/bot.tar.gz -C /tmp; \
     install -m 0755 /tmp/buktikanbot /usr/local/bin/telegram-buktikanbot; \
-    rm -f /tmp/bot.tar.gz /tmp/buktikanbot /tmp/README.md
+    install -d /usr/local/share/telegram-buktikanbot; \
+    if [ -f /tmp/.env.example ]; then \
+      install -m 0644 /tmp/.env.example /usr/local/share/telegram-buktikanbot/.env.example; \
+    fi; \
+    rm -f /tmp/bot.tar.gz /tmp/buktikanbot /tmp/README.md /tmp/.env.example
 USER appuser
 ENTRYPOINT ["/usr/local/bin/telegram-buktikanbot"]

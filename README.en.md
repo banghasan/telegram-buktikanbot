@@ -86,6 +86,9 @@ Environment variables:
 
 For webhook mode, see [`WEBHOOK.md`](./WEBHOOK.md).
 
+Docker note: if you use the Docker image, the sample env file is located at
+`/usr/local/share/telegram-buktikanbot/.env.example`.
+
 ## Bot Commands (Private)
 - `/start`: bot info.
 - `/ping`: response time check.

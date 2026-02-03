@@ -112,11 +112,13 @@ jobs:
           if [ "${{ runner.os }}" = "Windows" ]; then
             cp "target/${{ matrix.target }}/release/telegram-buktikanbot.exe" "dist/buktikanbot.exe"
             cp "README.md" "dist/README.md"
-            powershell -Command "Compress-Archive -Path dist/buktikanbot.exe,dist/README.md -DestinationPath ${name}.zip"
+            cp ".env.example" "dist/.env.example"
+            powershell -Command "Compress-Archive -Path dist/buktikanbot.exe,dist/README.md,dist/.env.example -DestinationPath ${name}.zip"
           else
             cp "target/${{ matrix.target }}/release/telegram-buktikanbot" "dist/buktikanbot"
             cp "README.md" "dist/README.md"
-            tar -czf "${name}.tar.gz" -C dist buktikanbot README.md
+            cp ".env.example" "dist/.env.example"
+            tar -czf "${name}.tar.gz" -C dist buktikanbot README.md .env.example
           fi
 
       - name: Upload artifact
