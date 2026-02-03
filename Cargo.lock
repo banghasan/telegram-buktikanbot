@@ -1515,7 +1515,7 @@ checksum = "20f34339676cdcab560c9a82300c4c2581f68b9369aedf0fae86f2ff9565ff3e"
 
 [[package]]
 name = "telegram-buktikanbot"
-version = "1.7.1"
+version = "1.7.2"
 dependencies = [
  "captcha",
  "chrono",

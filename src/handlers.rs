@@ -6,7 +6,7 @@ use chrono::Utc;
 use teloxide::prelude::*;
 use teloxide::types::{
     CallbackQuery, ChatMemberStatus, ChatMemberUpdated, ChatPermissions, InlineKeyboardButton,
-    InlineKeyboardMarkup, InputFile, Message, ParseMode, UserId,
+    InlineKeyboardMarkup, InputFile, InputMedia, InputMediaPhoto, Message, ParseMode, UserId,
 };
 
 use crate::captcha::{
@@ -15,7 +15,7 @@ use crate::captcha::{
 };
 use crate::config::{Config, LogLevel};
 use crate::logging::{
-    chat_context, log_message, log_telegram_error, log_user_event_by_display,
+    chat_context, log_message, log_system_level, log_telegram_error, log_user_event_by_display,
     log_user_event_with_chat,
 };
 use crate::utils::{escape_html, sanitize_log_text};
@@ -462,18 +462,43 @@ pub async fn on_callback_query(
                 let mut guard = state.lock().await;
                 guard.get_mut(&key).map(|pending| {
                     pending.attempts_left = pending.attempts_left.saturating_sub(1);
-                    let options =
-                        generate_captcha_options(&pending.code, config.captcha_option_count);
+                    let mut updated_png = None;
+                    let options = if pending.attempts_left == 0 {
+                        generate_captcha_options(&pending.code, config.captcha_option_count)
+                    } else {
+                        match generate_captcha(
+                            config.captcha_len,
+                            config.captcha_width,
+                            config.captcha_height,
+                        ) {
+                            Ok((code, png)) => {
+                                pending.code = code.clone();
+                                updated_png = Some(png);
+                                generate_captcha_options(&code, config.captcha_option_count)
+                            }
+                            Err(err) => {
+                                log_system_level(
+                                    &config,
+                                    LogLevel::Error,
+                                    &format!("failed to regenerate captcha: {err}"),
+                                );
+                                generate_captcha_options(&pending.code, config.captcha_option_count)
+                            }
+                        }
+                    };
                     pending.options = options.clone();
                     (
                         options,
+                        updated_png,
                         pending.attempts_left,
                         pending.attempts_total,
                         pending.remaining_secs,
                     )
                 })
             };
-            if let Some((options, attempts_left, attempts_total, remaining_secs)) = updated {
+            if let Some((options, updated_png, attempts_left, attempts_total, remaining_secs)) =
+                updated
+            {
                 if attempts_left == 0 {
                     let pending = {
                         let mut guard = state.lock().await;
@@ -533,15 +558,30 @@ pub async fn on_callback_query(
                     return Ok(());
                 }
                 let caption = captcha_caption(&from, remaining_secs, attempts_left, attempts_total);
-                let _ = bot
-                    .edit_message_caption(chat_id, message.id)
-                    .caption(caption)
-                    .parse_mode(ParseMode::Html)
-                    .reply_markup(build_captcha_keyboard(
-                        &options,
-                        config.captcha_option_digits_to_emoji,
-                    ))
-                    .await;
+                if let Some(png) = updated_png {
+                    let media = InputMedia::Photo(
+                        InputMediaPhoto::new(InputFile::memory(png))
+                            .caption(caption)
+                            .parse_mode(ParseMode::Html),
+                    );
+                    let _ = bot
+                        .edit_message_media(chat_id, message.id, media)
+                        .reply_markup(build_captcha_keyboard(
+                            &options,
+                            config.captcha_option_digits_to_emoji,
+                        ))
+                        .await;
+                } else {
+                    let _ = bot
+                        .edit_message_caption(chat_id, message.id)
+                        .caption(caption)
+                        .parse_mode(ParseMode::Html)
+                        .reply_markup(build_captcha_keyboard(
+                            &options,
+                            config.captcha_option_digits_to_emoji,
+                        ))
+                        .await;
+                }
                 let _ = bot
                     .answer_callback_query(id)
                     .text("❌ Jawaban salah, coba lagi.")
