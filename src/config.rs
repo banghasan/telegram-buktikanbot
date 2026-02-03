@@ -68,7 +68,7 @@ impl Config {
             parse_env_u64("CAPTCHA_TIMEOUT_SECONDS", 120, 30, 600, &mut warnings);
         let captcha_caption_update_secs =
             parse_env_u64("CAPTCHA_CAPTION_UPDATE_SECONDS", 10, 2, 30, &mut warnings);
-        let captcha_width = parse_env_u32("CAPTCHA_WIDTH", 400, 160, 400, &mut warnings);
+        let captcha_width = parse_env_u32("CAPTCHA_WIDTH", 320, 160, 400, &mut warnings);
         let captcha_height = parse_env_u32("CAPTCHA_HEIGHT", 100, 60, 200, &mut warnings);
         let captcha_option_count = parse_env_usize("CAPTCHA_OPTION_COUNT", 6, 3, 12, &mut warnings);
         let captcha_attempts = parse_env_usize("CAPTCHA_ATTEMPTS", 3, 1, 10, &mut warnings);

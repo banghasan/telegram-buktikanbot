@@ -52,7 +52,20 @@ pub fn generate_captcha(
         .apply_filter(Noise::new(0.4))
         .view(safe_width, safe_height);
 
-    let code = captcha.chars_as_string();
+    let mut code = captcha.chars_as_string();
+    if code.is_empty() {
+        let mut fallback = Captcha::new();
+        let supported = fallback.supported_chars();
+        fallback
+            .set_chars(&supported)
+            .add_chars(length as u32)
+            .apply_filter(Noise::new(0.4))
+            .view(safe_width, safe_height);
+        code = fallback.chars_as_string();
+        let png = fallback.as_png().ok_or("failed to render captcha")?;
+        return Ok((code, png));
+    }
+
     let png = captcha.as_png().ok_or("failed to render captcha")?;
     Ok((code, png))
 }
