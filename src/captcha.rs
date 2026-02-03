@@ -9,6 +9,7 @@ use rand::{Rng, seq::SliceRandom};
 use teloxide::types::{ChatId, MessageId, UserId};
 use tokio::sync::Mutex;
 
+use crate::captcha_quotes::CAPTCHA_QUOTES;
 use crate::utils::{escape_html, format_user_display};
 
 #[derive(Clone, Debug)]
@@ -56,6 +57,11 @@ pub fn captcha_caption(
     attempts_total: usize,
 ) -> String {
     let name = escape_html(&user.first_name);
+    let quote = CAPTCHA_QUOTES
+        .choose(&mut rand::thread_rng())
+        .copied()
+        .unwrap_or("Tunjukkan kamu bukan bot.");
+    let quote = escape_html(quote);
     let mention = format!("<a href=\"tg://user?id={}\">{}</a>", user.id.0, name);
     format!(
         "🖐🏼 Hi, {mention}\n\n\
@@ -63,7 +69,7 @@ pub fn captcha_caption(
 💁🏻‍♂️ Pilih jawaban yang benar dari tombol yang tersedia.\n\n\
 ⏳ Dalam <code>{remaining_secs}</code> detik.\n\
 🎯 Kesempatan: <code>{attempts_left}</code>/<code>{attempts_total}</code>\n\n\
-🗒 <i>Menjawab dengan benar, kamu akan mendapatkan akses group</i>
+🗒 <i>{quote}</i>
 "
     )
 }

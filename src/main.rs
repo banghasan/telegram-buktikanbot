@@ -5,6 +5,7 @@ use teloxide::prelude::*;
 use teloxide::update_listeners::webhooks;
 
 mod captcha;
+mod captcha_quotes;
 mod config;
 mod handlers;
 mod logging;
