@@ -63,7 +63,7 @@ pub fn captcha_caption(
 💁🏻‍♂️ Pilih jawaban yang benar dari tombol yang tersedia.\n\n\
 ⏳ Dalam <code>{remaining_secs}</code> detik.\n\
 🎯 Kesempatan: <code>{attempts_left}</code>/<code>{attempts_total}</code>\n\n\
-🗒 <i>Setelah menjawab dengan benar, kamu baru bisa mendapatkan akses user group.</i>.
+🗒 <i>Menjawab dengan benar, kamu akan mendapatkan akses group</i>
 "
     )
 }
