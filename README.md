@@ -75,7 +75,7 @@ Keterangan variabel:
 - `CAPTCHA_LEN`: panjang karakter CAPTCHA.
 - `CAPTCHA_TIMEOUT_SECONDS`: waktu maksimum menebak.
 - `CAPTCHA_CAPTION_UPDATE_SECONDS`: interval update caption countdown (default 10 detik).
-- `CAPTCHA_WIDTH` / `CAPTCHA_HEIGHT`: ukuran gambar CAPTCHA.
+- `CAPTCHA_WIDTH` / `CAPTCHA_HEIGHT`: ukuran gambar CAPTCHA (nilai efektif dibatasi max 399x299 karena batas library).
 - `CAPTCHA_OPTION_COUNT`: jumlah tombol pilihan jawaban (default 6).
 - `CAPTCHA_ATTEMPTS`: jumlah kesempatan menjawab (default 3).
 - `CAPTCHA_OPTION_DIGITS_TO_EMOJI`: ubah digit dan huruf A/B di tombol jadi emoji (A→🅰️, B→🅱️, AB→🆎) (default `true`).

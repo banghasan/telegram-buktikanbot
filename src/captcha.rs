@@ -43,12 +43,14 @@ pub fn generate_captcha(
     width: u32,
     height: u32,
 ) -> Result<(String, Vec<u8>), Box<dyn Error + Send + Sync>> {
+    let safe_width = width.min(399);
+    let safe_height = height.min(299);
     let mut captcha = Captcha::new();
     captcha
         .set_chars(CAPTCHA_SAFE_CHARS)
         .add_chars(length as u32)
         .apply_filter(Noise::new(0.4))
-        .view(width, height);
+        .view(safe_width, safe_height);
 
     let code = captcha.chars_as_string();
     let png = captcha.as_png().ok_or("failed to render captcha")?;

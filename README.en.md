@@ -70,7 +70,7 @@ Environment variables:
 - `CAPTCHA_LEN`: CAPTCHA text length.
 - `CAPTCHA_TIMEOUT_SECONDS`: maximum time to solve.
 - `CAPTCHA_CAPTION_UPDATE_SECONDS`: caption countdown update interval (default 10 seconds).
-- `CAPTCHA_WIDTH` / `CAPTCHA_HEIGHT`: CAPTCHA image size.
+- `CAPTCHA_WIDTH` / `CAPTCHA_HEIGHT`: CAPTCHA image size (effective values capped at 399x299 due to library limits).
 - `CAPTCHA_OPTION_COUNT`: number of answer buttons (default 6).
 - `CAPTCHA_ATTEMPTS`: number of attempts (default 3).
 - `CAPTCHA_OPTION_DIGITS_TO_EMOJI`: convert digits and A/B on buttons to emoji (A→🅰️, B→🅱️, AB→🆎) (default `true`).
