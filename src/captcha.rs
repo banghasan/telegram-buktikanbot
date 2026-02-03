@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use captcha::Captcha;
 use captcha::filters::Noise;
-use rand::distributions::Alphanumeric;
 use rand::{Rng, seq::SliceRandom};
 use teloxide::types::{ChatId, MessageId, UserId};
 use tokio::sync::Mutex;
@@ -34,6 +33,11 @@ pub enum CaptchaCheck {
     Verified(PendingCaptcha),
 }
 
+const CAPTCHA_SAFE_CHARS: &[char] = &[
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'J', 'K', 'M', 'N', 'P', 'Q', 'R', 'T', 'U', 'V', 'W',
+    'X', 'Y', 'Z', '2', '3', '4', '6', '7', '8', '9',
+];
+
 pub fn generate_captcha(
     length: usize,
     width: u32,
@@ -41,6 +45,7 @@ pub fn generate_captcha(
 ) -> Result<(String, Vec<u8>), Box<dyn Error + Send + Sync>> {
     let mut captcha = Captcha::new();
     captcha
+        .set_chars(CAPTCHA_SAFE_CHARS)
         .add_chars(length as u32)
         .apply_filter(Noise::new(0.4))
         .view(width, height);
@@ -82,8 +87,10 @@ pub fn generate_captcha_options(code: &str, count: usize) -> Vec<String> {
     let mut rng = rand::thread_rng();
     while options.len() < target {
         let candidate: String = (0..code.len())
-            .map(|_| rng.sample(Alphanumeric) as char)
-            .map(|ch| ch.to_ascii_uppercase())
+            .map(|_| {
+                let idx = rng.gen_range(0..CAPTCHA_SAFE_CHARS.len());
+                CAPTCHA_SAFE_CHARS[idx]
+            })
             .collect();
         if options
             .iter()

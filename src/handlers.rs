@@ -647,6 +647,26 @@ fn escape_markdown_v2(input: &str) -> String {
     out
 }
 
+fn digits_to_keycap_emoji(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        match ch {
+            '0' => out.push_str("0️⃣"),
+            '1' => out.push_str("1️⃣"),
+            '2' => out.push_str("2️⃣"),
+            '3' => out.push_str("3️⃣"),
+            '4' => out.push_str("4️⃣"),
+            '5' => out.push_str("5️⃣"),
+            '6' => out.push_str("6️⃣"),
+            '7' => out.push_str("7️⃣"),
+            '8' => out.push_str("8️⃣"),
+            '9' => out.push_str("9️⃣"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
 fn build_captcha_keyboard(options: &[String]) -> InlineKeyboardMarkup {
     let rows: Vec<Vec<InlineKeyboardButton>> = options
         .chunks(3)
@@ -654,7 +674,8 @@ fn build_captcha_keyboard(options: &[String]) -> InlineKeyboardMarkup {
             chunk
                 .iter()
                 .map(|option| {
-                    InlineKeyboardButton::callback(option.to_string(), format!("captcha:{option}"))
+                    let display = digits_to_keycap_emoji(option);
+                    InlineKeyboardButton::callback(display, format!("captcha:{option}"))
                 })
                 .collect()
         })
