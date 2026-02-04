@@ -105,6 +105,15 @@ For webhook mode, see [`WEBHOOK.md`](./WEBHOOK.md).
 Docker note: if you use the Docker image, the sample env file is located at
 `/usr/local/share/telegram-buktikanbot/.env.example`.
 
+### Docker Permission Note (/data)
+The container runs as non-root (`appuser`, uid `10001`). If you bind-mount a host folder to `/data`, make sure it is writable by uid `10001`, for example:
+
+```bash
+mkdir -p ./data
+sudo chown 10001:10001 ./data
+```
+Alternatively (less secure), run the container as root with `user: "0:0"` in `docker-compose.yml`.
+
 ## Bot Commands (Private)
 - `/start`: bot info.
 - `/ping`: response time check.

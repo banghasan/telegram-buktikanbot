@@ -110,6 +110,15 @@ Jika ingin menjalankan mode webhook, lihat panduan lengkap di [`WEBHOOK.md`](./W
 Catatan Docker: jika memakai image Docker, contoh env bisa ditemukan di
 `/usr/local/share/telegram-buktikanbot/.env.example`.
 
+### Catatan Permission Docker (/data)
+Container berjalan sebagai user non-root (`appuser`, uid `10001`). Jika bind-mount folder host ke `/data`, pastikan folder host tersebut bisa ditulis oleh uid `10001`, misalnya:
+
+```bash
+mkdir -p ./data
+sudo chown 10001:10001 ./data
+```
+Alternatif (kurang aman), jalankan container sebagai root dengan `user: "0:0"` di `docker-compose.yml`.
+
 ## Perintah Bot (Private)
 - `/start`: info bot.
 - `/ping`: cek response time.
