@@ -9,7 +9,7 @@ use teloxide::types::{ChatId, MessageId, UserId};
 use tokio::sync::Mutex;
 
 use crate::captcha_quotes::CAPTCHA_QUOTES;
-use crate::utils::{escape_html, format_user_display};
+use crate::utils::{escape_html, format_user_display, format_user_name};
 
 #[derive(Clone, Debug)]
 pub struct PendingCaptcha {
@@ -20,6 +20,8 @@ pub struct PendingCaptcha {
     pub attempts_total: usize,
     pub remaining_secs: u64,
     pub user_display: String,
+    pub user_name: String,
+    pub user_username: Option<String>,
     pub chat_title: Option<String>,
     pub chat_username: Option<String>,
 }
@@ -137,6 +139,8 @@ pub fn make_pending_captcha(
         attempts_total,
         remaining_secs,
         user_display: format_user_display(user),
+        user_name: format_user_name(user),
+        user_username: user.username.as_deref().map(|raw| raw.trim().to_string()),
         chat_title,
         chat_username,
     }
@@ -176,6 +180,8 @@ mod tests {
                 attempts_total: 3,
                 remaining_secs: 120,
                 user_display: "User @user".to_string(),
+                user_name: "User".to_string(),
+                user_username: Some("user".to_string()),
                 chat_title: Some("Group".to_string()),
                 chat_username: Some("groupname".to_string()),
             },

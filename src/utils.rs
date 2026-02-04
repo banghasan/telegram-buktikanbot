@@ -89,6 +89,16 @@ pub fn format_user_display(user: &teloxide::types::User) -> String {
     }
 }
 
+pub fn format_user_name(user: &teloxide::types::User) -> String {
+    let first_name = sanitize_log_text(user.first_name.trim());
+    let last_name = sanitize_log_text(user.last_name.as_deref().unwrap_or(""));
+    if last_name.is_empty() {
+        first_name
+    } else {
+        format!("{first_name} {last_name}")
+    }
+}
+
 pub fn format_user_context(user: &teloxide::types::User) -> String {
     let first_name = sanitize_log_text(user.first_name.trim());
     let last_name = sanitize_log_text(user.last_name.as_deref().unwrap_or(""));

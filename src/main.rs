@@ -1,8 +1,9 @@
 use std::error::Error;
 use std::sync::Arc;
 
+use chrono::TimeZone;
 use teloxide::prelude::*;
-use teloxide::types::{ChatId, UserId};
+use teloxide::types::{ChatId, ParseMode, UserId};
 use teloxide::update_listeners::webhooks;
 
 mod ban_release;
@@ -13,13 +14,14 @@ mod handlers;
 mod logging;
 mod utils;
 
-use crate::ban_release::{BanReleaseStore, worker_interval};
+use crate::ban_release::{BanReleaseJob, BanReleaseStore, worker_interval};
 use crate::captcha::SharedState;
 use crate::config::{Config, LogLevel, RunMode};
 use crate::handlers::{
     on_callback_query, on_chat_member_updated, on_left_member, on_new_members, on_non_text, on_text,
 };
 use crate::logging::{log_system, log_system_block, log_system_level};
+use crate::utils::{escape_html, sanitize_log_text};
 
 #[tokio::main]
 async fn main() {
@@ -267,28 +269,98 @@ async fn process_due_releases(
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let now = chrono::Utc::now().timestamp();
     let due = store.fetch_due(now).await?;
-    for (chat_id, user_id, _release_at) in due {
-        let Ok(user_id_u64) = u64::try_from(user_id) else {
+    for job in due {
+        let Ok(user_id_u64) = u64::try_from(job.user_id) else {
             log_system_level(
                 config,
                 LogLevel::Warn,
-                &format!("invalid user_id in ban release store; chat={chat_id} user_id={user_id}"),
+                &format!(
+                    "invalid user_id in ban release store; chat={} user_id={}",
+                    job.chat_id, job.user_id
+                ),
             );
-            store.delete_job(chat_id, user_id).await?;
+            store.delete_job(job.chat_id, job.user_id).await?;
             continue;
         };
         if let Err(err) = bot
-            .unban_chat_member(ChatId(chat_id), UserId(user_id_u64))
+            .unban_chat_member(ChatId(job.chat_id), UserId(user_id_u64))
             .await
         {
             log_system_level(
                 config,
                 LogLevel::Warn,
-                &format!("failed to unban user {user_id} in chat {chat_id}: {err}"),
+                &format!(
+                    "failed to unban user {} in chat {}: {err}",
+                    job.user_id, job.chat_id
+                ),
             );
             continue;
         }
-        store.delete_job(chat_id, user_id).await?;
+        store.delete_job(job.chat_id, job.user_id).await?;
+        send_ban_release_log_if_enabled(bot, config, &job).await;
     }
     Ok(())
+}
+
+async fn send_ban_release_log_if_enabled(bot: &Bot, config: &Arc<Config>, job: &BanReleaseJob) {
+    if !config.captcha_log_enabled {
+        return;
+    }
+    let Some(target_id) = config.captcha_log_chat_id else {
+        return;
+    };
+
+    let tz_now = chrono::Utc::now().with_timezone(&config.timezone);
+    let ts = tz_now.format("%Y-%m-%d %H:%M:%S").to_string();
+    let full_name = escape_html(&sanitize_log_text(job.user_name.trim()));
+    let username_line = job.user_username.as_deref().map(|raw| {
+        let username = escape_html(&sanitize_log_text(raw.trim()));
+        format!(" ├👤 @{username}")
+    });
+
+    let group_label = match (job.chat_username.as_deref(), job.chat_title.as_deref()) {
+        (Some(username), Some(title)) => format!("@{} : {}", username.trim(), title.trim()),
+        (Some(username), None) => format!("@{}", username.trim()),
+        (None, Some(title)) => title.trim().to_string(),
+        (None, None) => "unknown".to_string(),
+    };
+    let group_label = escape_html(&sanitize_log_text(&group_label));
+
+    let mut lines = Vec::with_capacity(6);
+    lines.push("🪵 Captcha Log".to_string());
+    lines.push(format!(" ├⏱️ <code>{}</code>", escape_html(&ts)));
+    lines.push(format!(" ├🙋🏽 {}", full_name));
+    if let Some(line) = username_line {
+        lines.push(line);
+    }
+    lines.push(format!(" ├👥 {}", group_label));
+    let release_ts = chrono::TimeZone::timestamp_opt(&config.timezone, job.release_at, 0)
+        .single()
+        .unwrap_or_else(|| {
+            chrono::Utc
+                .timestamp_opt(job.release_at, 0)
+                .single()
+                .unwrap()
+                .with_timezone(&config.timezone)
+        });
+    let release_ts = release_ts.format("%Y-%m-%d %H:%M:%S").to_string();
+    lines.push(format!(
+        " ├🕒 jadwal: <code>{}</code>",
+        escape_html(&release_ts)
+    ));
+    lines.push(" └👣 ban telah dilepas.".to_string());
+    let message = lines.join("\n");
+
+    if let Err(err) = bot
+        .send_message(ChatId(target_id), message)
+        .parse_mode(ParseMode::Html)
+        .disable_web_page_preview(true)
+        .await
+    {
+        log_system_level(
+            config,
+            LogLevel::Warn,
+            &format!("failed to send ban release log: {err}"),
+        );
+    }
 }

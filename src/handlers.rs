@@ -252,6 +252,8 @@ async fn start_captcha_for_user(
                 user_id,
                 pending.chat_title.as_deref(),
                 pending.chat_username.as_deref(),
+                pending.user_name.clone(),
+                pending.user_username.clone(),
                 ban_release_store_clone.clone(),
                 "failed to ban user on timeout",
             )
@@ -521,6 +523,8 @@ pub async fn on_callback_query(
                             from.id,
                             pending.chat_title.as_deref(),
                             pending.chat_username.as_deref(),
+                            pending.user_name.clone(),
+                            pending.user_username.clone(),
                             ban_release_store.clone(),
                             "failed to ban user on attempts exceeded",
                         )
@@ -682,6 +686,8 @@ async fn ban_user_and_maybe_release(
     user_id: UserId,
     chat_title: Option<&str>,
     chat_username: Option<&str>,
+    user_name: String,
+    user_username: Option<String>,
     ban_release_store: Option<Arc<BanReleaseStore>>,
     error_context: &str,
 ) {
@@ -718,13 +724,26 @@ async fn ban_user_and_maybe_release(
         );
         return;
     };
-    if let Err(err) = store.upsert_job(chat_id.0, user_id_i64, release_at).await {
+    let chat_title = chat_title.map(str::to_string);
+    let chat_username = chat_username.map(str::to_string);
+    if let Err(err) = store
+        .upsert_job(
+            chat_id.0,
+            user_id_i64,
+            release_at,
+            user_name,
+            user_username,
+            chat_title.clone(),
+            chat_username.clone(),
+        )
+        .await
+    {
         log_telegram_error(
             config,
             LogLevel::Warn,
             chat_id,
-            chat_title,
-            chat_username,
+            chat_title.as_deref(),
+            chat_username.as_deref(),
             "failed to store ban release job",
             &err,
         );
