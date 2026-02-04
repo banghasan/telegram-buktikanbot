@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 teloxide = { version = "0.12", default-features = false, features = ["macros", "rustls", "webhooks-axum"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal"] }
 dotenvy = "0.15"
 rand = "0.8"

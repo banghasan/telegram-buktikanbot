@@ -2,8 +2,10 @@ use std::error::Error;
 use std::sync::Arc;
 
 use teloxide::prelude::*;
+use teloxide::types::{ChatId, UserId};
 use teloxide::update_listeners::webhooks;
 
+mod ban_release;
 mod captcha;
 mod captcha_quotes;
 mod config;
@@ -11,6 +13,7 @@ mod handlers;
 mod logging;
 mod utils;
 
+use crate::ban_release::{BanReleaseStore, worker_interval};
 use crate::captcha::SharedState;
 use crate::config::{Config, LogLevel, RunMode};
 use crate::handlers::{
@@ -33,7 +36,7 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let version_line = format!("(system) version: {}", env!("CARGO_PKG_VERSION"));
     let config_line = format!(
-        "(system) config: captcha_len={} timeout={}s update={}s size={}x{} options={} attempts={} option_digits_to_emoji={} delete_join_message={} delete_left_message={} log_json={} log_level={} captcha_log_enabled={} captcha_log_chat_id={} timezone={} run_mode={}",
+        "(system) config: captcha_len={} timeout={}s update={}s size={}x{} options={} attempts={} option_digits_to_emoji={} delete_join_message={} delete_left_message={} ban_release_enabled={} ban_release_after_secs={} ban_release_db_path={} log_json={} log_level={} captcha_log_enabled={} captcha_log_chat_id={} timezone={} run_mode={}",
         config.captcha_len,
         config.captcha_timeout_secs,
         config.captcha_caption_update_secs,
@@ -44,6 +47,9 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         config.captcha_option_digits_to_emoji,
         config.delete_join_message,
         config.delete_left_message,
+        config.ban_release_enabled,
+        config.ban_release_after_secs,
+        config.ban_release_db_path,
         config.log_json,
         config.log_level.as_str(),
         config.captcha_log_enabled,
@@ -75,6 +81,30 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     }
 
     let state: SharedState = Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+    let ban_release_store = if config.ban_release_enabled {
+        match BanReleaseStore::init(config.ban_release_db_path.clone()).await {
+            Ok(store) => Some(Arc::new(store)),
+            Err(err) => {
+                log_system_level(
+                    &config,
+                    LogLevel::Warn,
+                    &format!("ban release store init failed: {err}"),
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    if let Some(store) = ban_release_store.clone() {
+        let bot = bot.clone();
+        let config = config.clone();
+        tokio::spawn(async move {
+            run_ban_release_worker(bot, config, store).await;
+        });
+    }
+
     let handler = dptree::entry()
         .branch(
             Update::filter_message()
@@ -85,8 +115,15 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
                     .endpoint({
                         let state = state.clone();
                         let config = config.clone();
+                        let ban_release_store = ban_release_store.clone();
                         move |bot: Bot, msg: teloxide::types::Message| {
-                            on_new_members(bot, msg, state.clone(), config.clone())
+                            on_new_members(
+                                bot,
+                                msg,
+                                state.clone(),
+                                config.clone(),
+                                ban_release_store.clone(),
+                            )
                         }
                     }),
                 )
@@ -106,8 +143,15 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
                         {
                             let state = state.clone();
                             let config = config.clone();
+                            let ban_release_store = ban_release_store.clone();
                             move |bot: Bot, msg: teloxide::types::Message| {
-                                on_text(bot, msg, state.clone(), config.clone())
+                                on_text(
+                                    bot,
+                                    msg,
+                                    state.clone(),
+                                    config.clone(),
+                                    ban_release_store.clone(),
+                                )
                             }
                         },
                     ),
@@ -120,15 +164,29 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         .branch(Update::filter_chat_member().endpoint({
             let state = state.clone();
             let config = config.clone();
+            let ban_release_store = ban_release_store.clone();
             move |bot: Bot, update: teloxide::types::ChatMemberUpdated| {
-                on_chat_member_updated(bot, update, state.clone(), config.clone())
+                on_chat_member_updated(
+                    bot,
+                    update,
+                    state.clone(),
+                    config.clone(),
+                    ban_release_store.clone(),
+                )
             }
         }))
         .branch(Update::filter_callback_query().endpoint({
             let state = state.clone();
             let config = config.clone();
+            let ban_release_store = ban_release_store.clone();
             move |bot: Bot, query: teloxide::types::CallbackQuery| {
-                on_callback_query(bot, query, state.clone(), config.clone())
+                on_callback_query(
+                    bot,
+                    query,
+                    state.clone(),
+                    config.clone(),
+                    ban_release_store.clone(),
+                )
             }
         }));
 
@@ -180,6 +238,57 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
                 )
                 .await;
         }
+    }
+    Ok(())
+}
+
+async fn run_ban_release_worker(bot: Bot, config: Arc<Config>, store: Arc<BanReleaseStore>) {
+    log_system_level(
+        &config,
+        LogLevel::Info,
+        "ban release worker started (interval 60s)",
+    );
+    loop {
+        if let Err(err) = process_due_releases(&bot, &config, &store).await {
+            log_system_level(
+                &config,
+                LogLevel::Warn,
+                &format!("ban release worker error: {err}"),
+            );
+        }
+        tokio::time::sleep(worker_interval()).await;
+    }
+}
+
+async fn process_due_releases(
+    bot: &Bot,
+    config: &Arc<Config>,
+    store: &Arc<BanReleaseStore>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let now = chrono::Utc::now().timestamp();
+    let due = store.fetch_due(now).await?;
+    for (chat_id, user_id, _release_at) in due {
+        let Ok(user_id_u64) = u64::try_from(user_id) else {
+            log_system_level(
+                config,
+                LogLevel::Warn,
+                &format!("invalid user_id in ban release store; chat={chat_id} user_id={user_id}"),
+            );
+            store.delete_job(chat_id, user_id).await?;
+            continue;
+        };
+        if let Err(err) = bot
+            .unban_chat_member(ChatId(chat_id), UserId(user_id_u64))
+            .await
+        {
+            log_system_level(
+                config,
+                LogLevel::Warn,
+                &format!("failed to unban user {user_id} in chat {chat_id}: {err}"),
+            );
+            continue;
+        }
+        store.delete_job(chat_id, user_id).await?;
     }
     Ok(())
 }

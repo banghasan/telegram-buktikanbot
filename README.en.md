@@ -69,6 +69,7 @@ DELETE_JOIN_MESSAGE=true
 DELETE_LEFT_MESSAGE=true
 BAN_RELEASE_ENABLED=false
 BAN_RELEASE_AFTER_SECONDS=21600
+BAN_RELEASE_DB_PATH=ban_release.sqlite
 LOG_ENABLED=true
 LOG_JSON=false
 LOG_LEVEL=info
@@ -90,6 +91,7 @@ Environment variables:
 - `DELETE_LEFT_MESSAGE`: delete left messages (default true).
 - `BAN_RELEASE_ENABLED`: `true` to auto-unban users after a kick/ban, `false` to disable (default `false`).
 - `BAN_RELEASE_AFTER_SECONDS`: delay before auto-unban (default 21600 = 6 hours).
+- `BAN_RELEASE_DB_PATH`: SQLite database path for auto-unban schedule (default `ban_release.sqlite`).
 - `LOG_ENABLED`: `true` to enable logs, `false` to disable.
 - `LOG_JSON`: `true` for JSON logs, `false` for colored logs.
 - `LOG_LEVEL`: `info`, `warn`, or `error` (default `info`).

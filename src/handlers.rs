@@ -9,6 +9,7 @@ use teloxide::types::{
     InlineKeyboardMarkup, InputFile, InputMedia, InputMediaPhoto, Message, ParseMode, UserId,
 };
 
+use crate::ban_release::BanReleaseStore;
 use crate::captcha::{
     CaptchaCheck, SharedState, captcha_caption, check_captcha_answer, generate_captcha,
     generate_captcha_options, make_pending_captcha,
@@ -25,6 +26,7 @@ pub async fn on_new_members(
     msg: Message,
     state: SharedState,
     config: Arc<Config>,
+    ban_release_store: Option<Arc<BanReleaseStore>>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let Some(members) = msg.new_chat_members() else {
         return Ok(());
@@ -46,6 +48,7 @@ pub async fn on_new_members(
             member.clone(),
             &state,
             &config,
+            &ban_release_store,
         )
         .await?;
     }
@@ -73,6 +76,7 @@ pub async fn on_chat_member_updated(
     update: ChatMemberUpdated,
     state: SharedState,
     config: Arc<Config>,
+    ban_release_store: Option<Arc<BanReleaseStore>>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let old_status = update.old_chat_member.status();
     let new_status = update.new_chat_member.status();
@@ -97,6 +101,7 @@ pub async fn on_chat_member_updated(
         user,
         &state,
         &config,
+        &ban_release_store,
     )
     .await?;
     Ok(())
@@ -110,6 +115,7 @@ async fn start_captcha_for_user(
     user: teloxide::types::User,
     state: &SharedState,
     config: &Arc<Config>,
+    ban_release_store: &Option<Arc<BanReleaseStore>>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     if user.is_bot {
         return Ok(());
@@ -186,6 +192,7 @@ async fn start_captcha_for_user(
     let bot_clone = bot.clone();
     let state_clone = state.clone();
     let config_clone = config.clone();
+    let ban_release_store_clone = ban_release_store.clone();
     let user_clone = user.clone();
     let user_id = user.id;
     let timeout = config.captcha_timeout_secs;
@@ -245,6 +252,7 @@ async fn start_captcha_for_user(
                 user_id,
                 pending.chat_title.as_deref(),
                 pending.chat_username.as_deref(),
+                ban_release_store_clone.clone(),
                 "failed to ban user on timeout",
             )
             .await;
@@ -292,6 +300,7 @@ pub async fn on_text(
     msg: Message,
     state: SharedState,
     config: Arc<Config>,
+    _ban_release_store: Option<Arc<BanReleaseStore>>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let Some(user) = msg.from() else {
         return Ok(());
@@ -422,6 +431,7 @@ pub async fn on_callback_query(
     query: CallbackQuery,
     state: SharedState,
     config: Arc<Config>,
+    ban_release_store: Option<Arc<BanReleaseStore>>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let CallbackQuery {
         id,
@@ -511,6 +521,7 @@ pub async fn on_callback_query(
                             from.id,
                             pending.chat_title.as_deref(),
                             pending.chat_username.as_deref(),
+                            ban_release_store.clone(),
                             "failed to ban user on attempts exceeded",
                         )
                         .await;
@@ -671,6 +682,7 @@ async fn ban_user_and_maybe_release(
     user_id: UserId,
     chat_title: Option<&str>,
     chat_username: Option<&str>,
+    ban_release_store: Option<Arc<BanReleaseStore>>,
     error_context: &str,
 ) {
     if let Err(err) = bot.ban_chat_member(chat_id, user_id).await {
@@ -689,27 +701,34 @@ async fn ban_user_and_maybe_release(
     if !config.ban_release_enabled {
         return;
     }
-
-    let bot = bot.clone();
-    let config = config.clone();
-    let chat_title = chat_title.map(str::to_string);
-    let chat_username = chat_username.map(str::to_string);
-    let delay = Duration::from_secs(config.ban_release_after_secs.max(1));
-
-    tokio::spawn(async move {
-        tokio::time::sleep(delay).await;
-        if let Err(err) = bot.unban_chat_member(chat_id, user_id).await {
-            log_telegram_error(
-                &config,
-                LogLevel::Warn,
-                chat_id,
-                chat_title.as_deref(),
-                chat_username.as_deref(),
-                "failed to unban user after ban release delay",
-                &err,
-            );
-        }
-    });
+    let Some(store) = ban_release_store else {
+        return;
+    };
+    let release_at = Utc::now().timestamp() + config.ban_release_after_secs as i64;
+    let Ok(user_id_i64) = i64::try_from(user_id.0) else {
+        let err = "user id out of range";
+        log_telegram_error(
+            config,
+            LogLevel::Warn,
+            chat_id,
+            chat_title,
+            chat_username,
+            "failed to store ban release job (user id out of range)",
+            &err,
+        );
+        return;
+    };
+    if let Err(err) = store.upsert_job(chat_id.0, user_id_i64, release_at).await {
+        log_telegram_error(
+            config,
+            LogLevel::Warn,
+            chat_id,
+            chat_title,
+            chat_username,
+            "failed to store ban release job",
+            &err,
+        );
+    }
 }
 
 fn is_command(input: &str, cmd: &str) -> bool {

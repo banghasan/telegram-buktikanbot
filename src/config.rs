@@ -46,6 +46,7 @@ pub struct Config {
     pub delete_left_message: bool,
     pub ban_release_enabled: bool,
     pub ban_release_after_secs: u64,
+    pub ban_release_db_path: String,
     pub log_enabled: bool,
     pub log_json: bool,
     pub log_level: LogLevel,
@@ -79,8 +80,15 @@ impl Config {
         let delete_join_message = parse_env_bool("DELETE_JOIN_MESSAGE", true, &mut warnings);
         let delete_left_message = parse_env_bool("DELETE_LEFT_MESSAGE", true, &mut warnings);
         let ban_release_enabled = parse_env_bool("BAN_RELEASE_ENABLED", false, &mut warnings);
-        let ban_release_after_secs =
-            parse_env_u64("BAN_RELEASE_AFTER_SECONDS", 21600, 60, 2_592_000, &mut warnings);
+        let ban_release_after_secs = parse_env_u64(
+            "BAN_RELEASE_AFTER_SECONDS",
+            21600,
+            60,
+            2_592_000,
+            &mut warnings,
+        );
+        let ban_release_db_path =
+            env::var("BAN_RELEASE_DB_PATH").unwrap_or_else(|_| "ban_release.sqlite".to_string());
         let log_enabled = parse_env_bool("LOG_ENABLED", true, &mut warnings);
         let log_json = parse_env_bool("LOG_JSON", false, &mut warnings);
         let log_level = env::var("LOG_LEVEL")
@@ -149,6 +157,7 @@ impl Config {
             delete_left_message,
             ban_release_enabled,
             ban_release_after_secs,
+            ban_release_db_path,
             log_enabled,
             log_json,
             log_level,
