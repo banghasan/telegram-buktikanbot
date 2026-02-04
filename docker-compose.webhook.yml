@@ -32,7 +32,7 @@ services:
     expose:
       - "8080"
     volumes:
-      - buktikan_data:/data
+      - ./data:/data
 
   caddy:
     image: caddy:2
