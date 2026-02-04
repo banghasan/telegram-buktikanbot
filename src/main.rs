@@ -89,7 +89,7 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
             Err(err) => {
                 log_system_level(
                     &config,
-                    LogLevel::Warn,
+                    LogLevel::Error,
                     &format!("ban release store init failed: {err}"),
                 );
                 None
