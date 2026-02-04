@@ -74,7 +74,7 @@ DELETE_JOIN_MESSAGE=true
 DELETE_LEFT_MESSAGE=true
 BAN_RELEASE_ENABLED=false
 BAN_RELEASE_AFTER_SECONDS=21600
-BAN_RELEASE_DB_PATH=buktikan.sqlite
+BAN_RELEASE_DB_PATH=/data/buktikan.sqlite
 LOG_ENABLED=true
 LOG_JSON=false
 LOG_LEVEL=info
@@ -96,7 +96,7 @@ Keterangan variabel:
 - `DELETE_LEFT_MESSAGE`: hapus pesan left Telegram saat user keluar (default true).
 - `BAN_RELEASE_ENABLED`: `true` untuk melepas (unban) user otomatis setelah kick/ban, `false` untuk nonaktif (default `false`).
 - `BAN_RELEASE_AFTER_SECONDS`: lama waktu tunggu sebelum unban otomatis (default 21600 = 6 jam).
-- `BAN_RELEASE_DB_PATH`: path database SQLite untuk jadwal auto-unban (default `buktikan.sqlite`).
+- `BAN_RELEASE_DB_PATH`: path database SQLite untuk jadwal auto-unban (default `/data/buktikan.sqlite`).
 - `LOG_ENABLED`: `true` untuk tampilkan log, `false` untuk nonaktif.
 - `LOG_JSON`: `true` untuk output log JSON, `false` untuk log berwarna.
 - `LOG_LEVEL`: `info`, `warn`, atau `error` (default `info`).

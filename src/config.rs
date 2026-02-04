@@ -88,7 +88,7 @@ impl Config {
             &mut warnings,
         );
         let ban_release_db_path =
-            env::var("BAN_RELEASE_DB_PATH").unwrap_or_else(|_| "buktikan.sqlite".to_string());
+            env::var("BAN_RELEASE_DB_PATH").unwrap_or_else(|_| "/data/buktikan.sqlite".to_string());
         let log_enabled = parse_env_bool("LOG_ENABLED", true, &mut warnings);
         let log_json = parse_env_bool("LOG_JSON", false, &mut warnings);
         let log_level = env::var("LOG_LEVEL")

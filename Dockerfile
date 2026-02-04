@@ -10,7 +10,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN useradd -r -u 10001 appuser
+RUN useradd -r -u 10001 appuser \
+    && install -d -m 0755 -o appuser -g appuser /data
 RUN set -eux; \
     case "${TARGETARCH}" in \
       amd64) target="x86_64-unknown-linux-gnu" ;; \

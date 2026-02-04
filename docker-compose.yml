@@ -18,10 +18,15 @@ services:
       DELETE_LEFT_MESSAGE: ${DELETE_LEFT_MESSAGE:-true}
       BAN_RELEASE_ENABLED: ${BAN_RELEASE_ENABLED:-false}
       BAN_RELEASE_AFTER_SECONDS: ${BAN_RELEASE_AFTER_SECONDS:-21600}
-      BAN_RELEASE_DB_PATH: ${BAN_RELEASE_DB_PATH:-buktikan.sqlite}
+      BAN_RELEASE_DB_PATH: ${BAN_RELEASE_DB_PATH:-/data/buktikan.sqlite}
       LOG_ENABLED: ${LOG_ENABLED:-true}
-      LOG_JSON: ${LOG_JSON:-false}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      CAPTCHA_LOG_ENABLED: ${CAPTCHA_LOG_ENABLED:-false}
-      CAPTCHA_LOG_CHAT_ID: ${CAPTCHA_LOG_CHAT_ID:-}
-      TIMEZONE: ${TIMEZONE:-Asia/Jakarta}
+    volumes:
+      - buktikan_data:/data
+
+volumes:
+  buktikan_data:
+    LOG_JSON: ${LOG_JSON:-false}
+    LOG_LEVEL: ${LOG_LEVEL:-info}
+    CAPTCHA_LOG_ENABLED: ${CAPTCHA_LOG_ENABLED:-false}
+    CAPTCHA_LOG_CHAT_ID: ${CAPTCHA_LOG_CHAT_ID:-}
+    TIMEZONE: ${TIMEZONE:-Asia/Jakarta}
