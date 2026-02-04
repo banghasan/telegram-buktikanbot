@@ -238,17 +238,16 @@ async fn start_captcha_for_user(
         };
 
         if let Some(pending) = pending {
-            if let Err(err) = bot_clone.ban_chat_member(chat_id, user_id).await {
-                log_telegram_error(
-                    &config_clone,
-                    LogLevel::Error,
-                    chat_id,
-                    pending.chat_title.as_deref(),
-                    pending.chat_username.as_deref(),
-                    "failed to ban user on timeout",
-                    &err,
-                );
-            }
+            ban_user_and_maybe_release(
+                &bot_clone,
+                &config_clone,
+                chat_id,
+                user_id,
+                pending.chat_title.as_deref(),
+                pending.chat_username.as_deref(),
+                "failed to ban user on timeout",
+            )
+            .await;
             if let Err(err) = bot_clone
                 .delete_message(chat_id, pending.captcha_message_id)
                 .await
@@ -505,17 +504,16 @@ pub async fn on_callback_query(
                         guard.remove(&key)
                     };
                     if let Some(pending) = pending {
-                        if let Err(err) = bot.ban_chat_member(chat_id, from.id).await {
-                            log_telegram_error(
-                                &config,
-                                LogLevel::Error,
-                                chat_id,
-                                pending.chat_title.as_deref(),
-                                pending.chat_username.as_deref(),
-                                "failed to ban user on attempts exceeded",
-                                &err,
-                            );
-                        }
+                        ban_user_and_maybe_release(
+                            &bot,
+                            &config,
+                            chat_id,
+                            from.id,
+                            pending.chat_title.as_deref(),
+                            pending.chat_username.as_deref(),
+                            "failed to ban user on attempts exceeded",
+                        )
+                        .await;
                         if let Err(err) = bot
                             .delete_message(chat_id, pending.captcha_message_id)
                             .await
@@ -664,6 +662,54 @@ async fn restore_chat_permissions(
     bot.restrict_chat_member(chat_id, user_id, permissions)
         .await?;
     Ok(())
+}
+
+async fn ban_user_and_maybe_release(
+    bot: &Bot,
+    config: &Arc<Config>,
+    chat_id: ChatId,
+    user_id: UserId,
+    chat_title: Option<&str>,
+    chat_username: Option<&str>,
+    error_context: &str,
+) {
+    if let Err(err) = bot.ban_chat_member(chat_id, user_id).await {
+        log_telegram_error(
+            config,
+            LogLevel::Error,
+            chat_id,
+            chat_title,
+            chat_username,
+            error_context,
+            &err,
+        );
+        return;
+    }
+
+    if !config.ban_release_enabled {
+        return;
+    }
+
+    let bot = bot.clone();
+    let config = config.clone();
+    let chat_title = chat_title.map(str::to_string);
+    let chat_username = chat_username.map(str::to_string);
+    let delay = Duration::from_secs(config.ban_release_after_secs.max(1));
+
+    tokio::spawn(async move {
+        tokio::time::sleep(delay).await;
+        if let Err(err) = bot.unban_chat_member(chat_id, user_id).await {
+            log_telegram_error(
+                &config,
+                LogLevel::Warn,
+                chat_id,
+                chat_title.as_deref(),
+                chat_username.as_deref(),
+                "failed to unban user after ban release delay",
+                &err,
+            );
+        }
+    });
 }
 
 fn is_command(input: &str, cmd: &str) -> bool {

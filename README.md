@@ -72,6 +72,8 @@ CAPTCHA_ATTEMPTS=3
 CAPTCHA_OPTION_DIGITS_TO_EMOJI=true
 DELETE_JOIN_MESSAGE=true
 DELETE_LEFT_MESSAGE=true
+BAN_RELEASE_ENABLED=false
+BAN_RELEASE_AFTER_SECONDS=21600
 LOG_ENABLED=true
 LOG_JSON=false
 LOG_LEVEL=info
@@ -91,6 +93,8 @@ Keterangan variabel:
 - `CAPTCHA_OPTION_DIGITS_TO_EMOJI`: ubah digit dan huruf A/B di tombol jadi emoji (A→🅰️, B→🅱️, AB→🆎) (default `true`).
 - `DELETE_JOIN_MESSAGE`: hapus pesan join Telegram saat user masuk (default true).
 - `DELETE_LEFT_MESSAGE`: hapus pesan left Telegram saat user keluar (default true).
+- `BAN_RELEASE_ENABLED`: `true` untuk melepas (unban) user otomatis setelah kick/ban, `false` untuk nonaktif (default `false`).
+- `BAN_RELEASE_AFTER_SECONDS`: lama waktu tunggu sebelum unban otomatis (default 21600 = 6 jam).
 - `LOG_ENABLED`: `true` untuk tampilkan log, `false` untuk nonaktif.
 - `LOG_JSON`: `true` untuk output log JSON, `false` untuk log berwarna.
 - `LOG_LEVEL`: `info`, `warn`, atau `error` (default `info`).
