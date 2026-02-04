@@ -2,3 +2,12 @@
 /.env
 /release
 /prompt
+/data
+# sqlite / db files
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
