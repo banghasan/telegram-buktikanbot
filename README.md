@@ -1,5 +1,14 @@
 # Bot Telegram - Buktikan Dirimu Manusia
 
+![](https://img.shields.io/github/v/release/banghasan/telegram-buktikanbot
+) ![](https://img.shields.io/github/actions/workflow/status/banghasan/telegram-buktikanbot/release.yml?style=plastic
+) ![](https://img.shields.io/github/downloads/banghasan/telegram-buktikanbot/total
+) ![](https://img.shields.io/github/languages/code-size/banghasan/telegram-buktikanbot
+) 
+![](https://img.shields.io/github/forks/banghasan/telegram-buktikanbot
+) ![](https://img.shields.io/github/stars/banghasan/telegram-buktikanbot
+)
+
 Read this README in English: [README.en.md](./README.en.md)
 
 Bot Telegram untuk memverifikasi user baru yang masuk grup menggunakan CAPTCHA bergambar. Ketika user masuk grup, hak akses dicabut semua -- hanya bisa kirim teks.
@@ -144,34 +153,7 @@ Naikkan versi:
 
 ## Build dari Source (Alternatif)
 
-### Pra Syarat
-- Rust (edisi 2024) dan Cargo.
-
-### Build dan Run
-
-Jalankan langsung:
-
-```bash
-cargo run
-```
-
-Atau build release:
-
-```bash
-cargo build --release
-```
-
-Hasil binary ada di:
-
-```text
-target/release/telegram-buktikanbot
-```
-
-Jalankan binary hasil build:
-
-```bash
-./target/release/telegram-buktikanbot
-```
+Lihat panduan lengkap di [BUILD_FROM_SOURCE.md](BUILD_FROM_SOURCE.md).
 
 ## Docker
 
@@ -220,8 +202,8 @@ Untuk mode webhook via Docker Compose, lihat [`WEBHOOK.md`](./WEBHOOK.md) dan co
 
 ## Credit
 - Hasanudin H Syafaat @hasanudinhs
-- banghasan@gmail.com
-- https://banghasan.com
+- banghasan@gmail.com / https://banghasan.com
+- https://botindonesia.web.id
 
 Diskusi dan support di grup Telegram [@botindonesia](https://t.me/botindonesia).
 
