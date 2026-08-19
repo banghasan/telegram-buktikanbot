@@ -34,7 +34,7 @@ Keputusan sementara:
 - development dan staging memakai polling;
 - production memakai webhook;
 - durasi ban sementara dikonfigurasi melalui BAN_RELEASE_AFTER_SECONDS;
-- contoh durasi empat jam adalah 14400 detik.
+- default durasi ban adalah 14400 detik atau empat jam.
 
 ## SQLite
 

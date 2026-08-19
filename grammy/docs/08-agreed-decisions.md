@@ -17,7 +17,9 @@ Belum ada perubahan ke alur chat join request.
 
 ## 2. Ephemeral dan fallback
 
-Bot mencoba mengirim CAPTCHA sebagai Ephemeral Message. Jika pengiriman atau delivery gagal, bot mencoba ulang maksimal dua kali. Setelah dua kali gagal, bot menggunakan CAPTCHA pesan biasa di grup seperti perilaku Rust saat ini.
+Bot mencoba mengirim CAPTCHA sebagai Ephemeral Message. Request pertama dikirim langsung; retry kedua dilakukan setelah jeda tiga detik. Jika dua request gagal di level API, bot menggunakan CAPTCHA pesan biasa di grup seperti perilaku Rust saat ini.
+
+Telegram tidak memberikan sinyal yang dapat memastikan pesan sudah tampil pada client user. Karena itu, user offline diperlakukan berbeda dari request API yang gagal dan tidak otomatis memicu fallback publik.
 
 Fallback publik harus tetap menggunakan inline button. User tidak boleh menjawab CAPTCHA dengan mengirim pesan teks.
 
@@ -41,7 +43,7 @@ User yang timeout atau menghabiskan percobaan akan dikenai ban sementara. Durasi
 BAN_RELEASE_AFTER_SECONDS=14400
 ~~~
 
-Nilai default produksi masih perlu dikonfirmasi sebelum coding. Setelah durasi selesai, user dapat mencoba masuk kembali sesuai aturan Telegram dan konfigurasi bot.
+Nilai default produksi ditetapkan empat jam. Setelah durasi selesai, user dapat mencoba masuk kembali sesuai aturan Telegram dan konfigurasi bot.
 
 ## 6. Callback dan client lama
 

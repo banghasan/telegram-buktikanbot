@@ -17,7 +17,6 @@ Dokumen ini hanya berisi detail yang masih terbuka. Keputusan utama sudah dicata
 - Detail perilaku pesan non-button selama user restricted.
 - Apakah countdown tetap diedit berkala.
 - Perilaku tepat untuk user yang offline setelah retry dan fallback.
-- Nilai default durasi pelepasan ban.
 
 ## Keputusan operasi
 

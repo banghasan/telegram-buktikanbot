@@ -27,11 +27,13 @@ CAPTCHA hanya terlihat oleh user yang harus menyelesaikannya. Timeline grup tida
 ## Batasan dan fallback
 
 - Delivery ephemeral tidak dijamin jika user offline.
+- Bot dapat mendeteksi kegagalan request API, tetapi tidak dapat memastikan apakah client user benar-benar menampilkan pesan.
 - Ephemeral tidak menggantikan restrict permission.
 - Bot harus menjadi administrator sesuai kebutuhan restrictChatMember, ban, dan penghapusan.
 - Callback dari pesan ephemeral harus dipetakan memakai data ephemeral, bukan mengasumsikan message_id biasa.
-- Pengiriman ephemeral dicoba maksimal dua kali.
-- Setelah dua kali gagal, bot kembali ke CAPTCHA pesan biasa di grup.
+- Request pengiriman ephemeral dicoba maksimal dua kali: percobaan pertama langsung, retry kedua setelah jeda tiga detik.
+- Jika dua request gagal di level API, bot kembali ke CAPTCHA pesan biasa di grup.
+- Jika request sukses tetapi user offline, Telegram tidak memberi sinyal delivery yang dapat dijadikan dasar retry.
 - Fallback tetap memakai inline button dan tidak menerima jawaban teks.
 
 ## Keputusan yang perlu disetujui
