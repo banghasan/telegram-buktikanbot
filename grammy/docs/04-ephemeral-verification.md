@@ -36,9 +36,8 @@ CAPTCHA hanya terlihat oleh user yang harus menyelesaikannya. Timeline grup tida
 - Jika request sukses tetapi user offline, Telegram tidak memberi sinyal delivery yang dapat dijadikan dasar retry.
 - Fallback tetap memakai inline button dan tidak menerima jawaban teks.
 
-## Keputusan yang perlu disetujui
+## Keputusan yang masih perlu disetujui
 
-- Detail interval dan definisi kegagalan retry.
 - Berapa lama pending state dipertahankan setelah fallback.
 - Apakah countdown tetap diedit berkala atau hanya ditampilkan sebagai waktu kedaluwarsa awal?
 - Client Telegram minimum apa yang harus didukung?

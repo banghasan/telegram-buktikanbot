@@ -2,7 +2,21 @@
 
 ## Testing tanpa Telegram production
 
-Test harus mencakup parsing konfigurasi, generate CAPTCHA, validasi jawaban, batas percobaan, expiry, ownership callback, idempotency, restore permission, ban-release scheduling, sanitasi log, dan SQLite migration.
+Test harus mencakup parsing konfigurasi, generate CAPTCHA, validasi jawaban, batas percobaan, expiry, ownership callback, callback ganda, race callback versus timeout, idempotency, restore permission, kegagalan hak admin, ban-release scheduling, sanitasi log, dan SQLite migration.
+
+Setiap perubahan grammY harus memiliki unit test untuk domain logic dan integration test untuk adapter tanpa token production.
+
+## Quality checks
+
+Quality checks wajib dijalankan dengan Bun:
+
+- format check;
+- lint;
+- strict TypeScript type-check;
+- unit test;
+- integration test tanpa token production.
+
+Semua check harus lulus sebelum pull request dapat dianggap siap direview.
 
 ## Testing dengan Telegram staging
 

@@ -51,22 +51,32 @@ Callback query tetap digunakan sebagai mekanisme jawaban, baik untuk pesan ephem
 
 Client yang tidak mendukung Ephemeral Messages boleh menggunakan fallback pesan grup biasa setelah mekanisme retry gagal.
 
-## 7. Data
+## 7. Edge case dan fail-safe behavior
+
+- Jika ephemeral dan fallback pesan grup sama-sama gagal, user tetap restricted, timeout tetap berjalan, dan error dicatat sebagai critical.
+- Jika user keluar sebelum verifikasi selesai, pending state dibersihkan. Jika user masuk lagi, bot membuat CAPTCHA baru.
+- Join event, callback ganda, timeout bersamaan dengan jawaban benar, dan update terlambat harus idempotent.
+- Jika bot kehilangan hak admin, bot tidak boleh menganggap verifikasi berhasil. User tetap pada kondisi aman dan kegagalan dicatat.
+- Setelah verifikasi, permission dipulihkan berdasarkan permission grup terbaru.
+- Jika Telegram memberikan retry_after, bot mengikuti nilainya. Retry tidak boleh melewati batas timeout tanpa masuk ke alur timeout.
+
+## 8. Data
 
 SQLite dipertahankan. Pending verification dan ban-release menggunakan storage yang dapat survive restart. Database staging dan production dipisahkan.
 
 Rust dan grammY tidak dijalankan bersamaan dengan token atau database production yang sama.
 
-## 8. Transport
+## 9. Transport
 
 Polling dipakai untuk development dan staging. Webhook menjadi mode utama production, dengan secret token dan graceful shutdown yang terdokumentasi.
 
 Kedua mode tetap didukung selama tidak menambah kompleksitas yang mengubah keamanan verifikasi.
 
-## Belum final
+## 10. Standar kualitas
 
-- nilai default BAN_RELEASE_AFTER_SECONDS;
-- jumlah dan interval retry pengiriman ephemeral secara teknis;
-- kebijakan pasti untuk pesan non-button selama user restricted;
-- daftar client Telegram minimum;
-- detail schema persistence pending CAPTCHA.
+- State machine verification harus eksplisit dan memiliki terminal state.
+- Telegram API dipanggil melalui adapter yang terpisah dari business logic.
+- Production memakai structured JSON logging dan correlation ID berbasis chat/user.
+- Environment variable divalidasi dengan batas nilai yang jelas.
+- Staging, backup SQLite, checklist cutover, dan rollback wajib tersedia.
+- Unit test, integration test tanpa token production, lint, type-check, dan format check menjadi quality gate.

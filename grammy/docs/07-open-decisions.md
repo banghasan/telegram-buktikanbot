@@ -13,10 +13,8 @@ Dokumen ini hanya berisi detail yang masih terbuka. Keputusan utama sudah dicata
 
 ## Keputusan produk
 
-- Interval retry Ephemeral Messages.
 - Detail perilaku pesan non-button selama user restricted.
 - Apakah countdown tetap diedit berkala.
-- Perilaku tepat untuk user yang offline setelah retry dan fallback.
 
 ## Keputusan operasi
 

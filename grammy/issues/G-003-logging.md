@@ -10,4 +10,5 @@ Mempertahankan observability dan konteks error yang saat ini tersedia di Rust.
 - log memiliki chat/user context yang aman;
 - error Telegram tidak menampilkan token;
 - format JSON dan level log memiliki perilaku terdokumentasi;
+- production log memakai correlation ID berbasis chat/user;
 - kegagalan logging tidak mematikan alur verifikasi utama tanpa alasan.
