@@ -53,7 +53,7 @@ Version change details are available on the [Release][releases] page.
 Copy `.env.example` to `.env` first, then fill the values:
 - Linux/macOS (Terminal): `cp .env.example .env`
 - Windows (PowerShell): `Copy-Item .env.example .env`
-The `.env.example` file is in the repo root.
+The `.env.example` file is in the `rust/` directory.
 
 ```env
 BOT_TOKEN=your-telegram-bot-token

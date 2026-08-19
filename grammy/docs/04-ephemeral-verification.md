@@ -1,0 +1,40 @@
+# Desain Verifikasi dengan Ephemeral Messages
+
+## Tujuan
+
+CAPTCHA hanya terlihat oleh user yang harus menyelesaikannya. Timeline grup tidak dipenuhi gambar CAPTCHA, tombol jawaban, atau perubahan countdown.
+
+## Alur yang direncanakan
+
+1. User masuk ke grup.
+2. Bot mengosongkan permission user seperti implementasi Rust.
+3. Bot mengirim CAPTCHA photo ke chat grup dengan receiver_user_id user tersebut.
+4. Bot menyimpan ephemeral_message_id bersama pending state.
+5. User menekan tombol jawaban.
+6. Bot memastikan callback berasal dari user yang memiliki pending state.
+7. Jawaban salah memperbarui CAPTCHA ephemeral.
+8. Jawaban benar menghapus pesan ephemeral lalu restore permission.
+9. Timeout menghapus pesan ephemeral lalu ban/kick sesuai kebijakan.
+
+## Method API yang diperlukan
+
+- sendPhoto dengan receiver_user_id;
+- editEphemeralMessageMedia;
+- editEphemeralMessageCaption;
+- editEphemeralMessageReplyMarkup;
+- deleteEphemeralMessage.
+
+## Batasan dan fallback
+
+- Delivery ephemeral tidak dijamin jika user offline.
+- Ephemeral tidak menggantikan restrict permission.
+- Bot harus menjadi administrator sesuai kebutuhan restrictChatMember, ban, dan penghapusan.
+- Callback dari pesan ephemeral harus dipetakan memakai data ephemeral, bukan mengasumsikan message_id biasa.
+- Jika client staging tidak menerima ephemeral, fallback harus diputuskan sebelum implementasi.
+
+## Keputusan yang perlu disetujui
+
+- Apakah fallback berupa pesan grup biasa atau instruksi untuk membuka chat bot?
+- Berapa lama pending state dipertahankan jika ephemeral tidak diterima?
+- Apakah countdown tetap diedit berkala atau hanya ditampilkan sebagai waktu kedaluwarsa awal?
+- Client Telegram minimum apa yang harus didukung?

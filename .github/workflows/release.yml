@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Override version (e.g. 1.2.3). Leave empty to use Cargo.toml"
+        description: "Override version (e.g. 1.2.3). Leave empty to use rust/Cargo.toml"
         required: false
       run_docker:
         description: "Run Docker build workflow after release"
@@ -33,7 +33,7 @@ jobs:
           if [ -n "${{ inputs.version }}" ]; then
             VERSION="${{ inputs.version }}"
           else
-            VERSION=$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]\+\)".*/\1/p' Cargo.toml | head -n1)
+            VERSION=$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]\+\)".*/\1/p' rust/Cargo.toml | head -n1)
           fi
           if [ -z "$VERSION" ]; then
             echo "version is empty" >&2
@@ -99,9 +99,9 @@ jobs:
         shell: bash
         run: |
           if [ "${{ matrix.use_cross }}" = "true" ]; then
-            cross build --release --target ${{ matrix.target }}
+            cross build --release --target ${{ matrix.target }} --manifest-path rust/Cargo.toml
           else
-            cargo build --release --target ${{ matrix.target }}
+            cargo build --release --target ${{ matrix.target }} --manifest-path rust/Cargo.toml
           fi
 
       - name: Package artifact
@@ -110,14 +110,14 @@ jobs:
           name="buktikanbot-${{ needs.resolve-version.outputs.version }}-${{ matrix.target }}"
           mkdir -p dist
           if [ "${{ runner.os }}" = "Windows" ]; then
-            cp "target/${{ matrix.target }}/release/telegram-buktikanbot.exe" "dist/buktikanbot.exe"
-            cp "README.md" "dist/README.md"
-            cp ".env.example" "dist/.env.example"
+            cp "rust/target/${{ matrix.target }}/release/telegram-buktikanbot.exe" "dist/buktikanbot.exe"
+            cp "rust/README.md" "dist/README.md"
+            cp "rust/.env.example" "dist/.env.example"
             powershell -Command "Compress-Archive -Path dist/buktikanbot.exe,dist/README.md,dist/.env.example -DestinationPath ${name}.zip"
           else
-            cp "target/${{ matrix.target }}/release/telegram-buktikanbot" "dist/buktikanbot"
-            cp "README.md" "dist/README.md"
-            cp ".env.example" "dist/.env.example"
+            cp "rust/target/${{ matrix.target }}/release/telegram-buktikanbot" "dist/buktikanbot"
+            cp "rust/README.md" "dist/README.md"
+            cp "rust/.env.example" "dist/.env.example"
             tar -czf "${name}.tar.gz" -C dist buktikanbot README.md .env.example
           fi
 
