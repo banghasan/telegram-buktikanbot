@@ -30,11 +30,13 @@ CAPTCHA hanya terlihat oleh user yang harus menyelesaikannya. Timeline grup tida
 - Ephemeral tidak menggantikan restrict permission.
 - Bot harus menjadi administrator sesuai kebutuhan restrictChatMember, ban, dan penghapusan.
 - Callback dari pesan ephemeral harus dipetakan memakai data ephemeral, bukan mengasumsikan message_id biasa.
-- Jika client staging tidak menerima ephemeral, fallback harus diputuskan sebelum implementasi.
+- Pengiriman ephemeral dicoba maksimal dua kali.
+- Setelah dua kali gagal, bot kembali ke CAPTCHA pesan biasa di grup.
+- Fallback tetap memakai inline button dan tidak menerima jawaban teks.
 
 ## Keputusan yang perlu disetujui
 
-- Apakah fallback berupa pesan grup biasa atau instruksi untuk membuka chat bot?
-- Berapa lama pending state dipertahankan jika ephemeral tidak diterima?
+- Detail interval dan definisi kegagalan retry.
+- Berapa lama pending state dipertahankan setelah fallback.
 - Apakah countdown tetap diedit berkala atau hanya ditampilkan sebagai waktu kedaluwarsa awal?
 - Client Telegram minimum apa yang harus didukung?

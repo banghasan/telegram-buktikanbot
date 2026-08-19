@@ -1,6 +1,6 @@
 # Pertanyaan dan Keputusan yang Belum Final
 
-Dokumen ini menjadi daftar diskusi sebelum coding dimulai.
+Dokumen ini hanya berisi detail yang masih terbuka. Keputusan utama sudah dicatat di [Keputusan yang Sudah Disepakati](./08-agreed-decisions.md).
 
 ## Keputusan teknis
 
@@ -13,11 +13,11 @@ Dokumen ini menjadi daftar diskusi sebelum coding dimulai.
 
 ## Keputusan produk
 
-- Fallback jika Ephemeral Messages tidak diterima client.
-- Apakah CAPTCHA langsung dikirim ke grup sebagai ephemeral atau user diarahkan ke private chat bot.
+- Interval retry Ephemeral Messages.
+- Detail perilaku pesan non-button selama user restricted.
 - Apakah countdown tetap diedit berkala.
-- Perilaku tepat untuk user yang offline.
-- Kebijakan kick versus ban dan durasi pelepasan ban.
+- Perilaku tepat untuk user yang offline setelah retry dan fallback.
+- Nilai default durasi pelepasan ban.
 
 ## Keputusan operasi
 

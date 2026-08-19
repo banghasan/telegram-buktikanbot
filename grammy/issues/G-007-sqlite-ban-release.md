@@ -8,6 +8,7 @@ Mempertahankan jadwal pelepasan ban dan data operasional tanpa kehilangan kompat
 
 - schema Rust dipetakan;
 - path database dapat dikonfigurasi;
+- pending CAPTCHA dan jadwal ban-release survive restart;
 - jadwal survive restart;
 - duplicate schedule aman;
 - backup dan rollback terdokumentasi;

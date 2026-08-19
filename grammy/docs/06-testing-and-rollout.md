@@ -17,6 +17,8 @@ Skenario manual minimum:
 - callback dari user lain;
 - bot restart saat CAPTCHA pending;
 - user offline saat ephemeral dikirim;
+- ephemeral gagal dikirim pada percobaan pertama dan kedua lalu berpindah ke fallback grup;
+- fallback grup menolak jawaban teks dan hanya menerima callback button;
 - join dan left message;
 - polling dan webhook.
 

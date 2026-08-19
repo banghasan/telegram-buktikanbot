@@ -11,4 +11,6 @@ Menggunakan Ephemeral Messages Bot API 10.2 untuk menyembunyikan CAPTCHA dari an
 - callback ephemeral tervalidasi terhadap user dan pending state;
 - caption/media/keyboard dapat diperbarui;
 - pesan dapat dihapus pada success, timeout, dan attempts exhausted;
-- fallback delivery disetujui dan diuji.
+- pengiriman ephemeral dicoba maksimal dua kali;
+- fallback pesan biasa di grup tetap hanya menerima callback button;
+- fallback delivery diuji pada client yang tidak mendukung ephemeral.

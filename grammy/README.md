@@ -41,6 +41,7 @@ Migrasi tidak boleh mengubah aturan verifikasi tanpa keputusan eksplisit. Fitur 
 - [Desain Ephemeral Messages](./docs/04-ephemeral-verification.md)
 - [Kompatibilitas konfigurasi dan data](./docs/05-data-and-configuration.md)
 - [Strategi testing dan rollout](./docs/06-testing-and-rollout.md)
+- [Keputusan yang sudah disepakati](./docs/08-agreed-decisions.md)
 - [Pertanyaan dan keputusan yang belum final](./docs/07-open-decisions.md)
 - [Daftar issue implementasi](./issues/README.md)
 

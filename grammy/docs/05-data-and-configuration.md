@@ -29,9 +29,16 @@ Nama konfigurasi Rust dipertahankan sebagai baseline:
 
 Jika grammY membutuhkan nama baru, mapping lama ke baru harus ditulis di dokumentasi dan env.example.
 
+Keputusan sementara:
+
+- development dan staging memakai polling;
+- production memakai webhook;
+- durasi ban sementara dikonfigurasi melalui BAN_RELEASE_AFTER_SECONDS;
+- contoh durasi empat jam adalah 14400 detik.
+
 ## SQLite
 
-Strategi awal: kompatibilitas baca/tulis dengan data Rust dipertahankan.
+Strategi awal: kompatibilitas baca/tulis dengan data Rust dipertahankan, dan pending CAPTCHA juga dirancang agar survive restart.
 
 Sebelum implementasi:
 
