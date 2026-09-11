@@ -9,7 +9,7 @@ teloxide = { version = "0.17.0", default-features = false, features = ["macros",
 rusqlite = { version = "0.31", features = ["bundled"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal"] }
 dotenvy = "0.15"
-rand = "0.8"
+rand = "0.10"
 captcha = "0.0.9"
 chrono = "0.4"
 chrono-tz = "0.8"
