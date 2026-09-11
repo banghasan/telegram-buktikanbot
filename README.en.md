@@ -143,6 +143,16 @@ Bump version:
 
 See the full guide in [BUILD_FROM_SOURCE.en.md](BUILD_FROM_SOURCE.en.md).
 
+## Pull Request Checks
+
+Every Pull Request runs automated checks through GitHub Actions:
+
+- formatting with `cargo fmt`;
+- unit tests with `cargo test --locked`;
+- linting with `cargo clippy --locked --all-targets -- -D warnings`.
+
+The workflow does not run on ordinary pushes.
+
 ## Docker
 
 ### Pull Image (GHCR)

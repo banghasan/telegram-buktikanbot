@@ -157,6 +157,16 @@ Naikkan versi:
 
 Lihat panduan lengkap di [BUILD_FROM_SOURCE.md](BUILD_FROM_SOURCE.md).
 
+## Pemeriksaan Pull Request
+
+Setiap Pull Request menjalankan pemeriksaan otomatis melalui GitHub Actions:
+
+- format kode dengan `cargo fmt`;
+- unit test dengan `cargo test --locked`;
+- lint dengan `cargo clippy --locked --all-targets -- -D warnings`.
+
+Workflow ini tidak berjalan pada push biasa.
+
 ## Docker
 
 ### Pull Image (GHCR)
