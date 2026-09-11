@@ -8,6 +8,70 @@ use crate::captcha::CaptchaSession;
 
 const RELEASE_BATCH_SIZE: i64 = 100;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatsEventType {
+    CaptchaStarted,
+    CaptchaSuccess,
+    CaptchaFailed,
+    BanCreated,
+    BanAutoReleased,
+    BanManualReleased,
+}
+
+impl StatsEventType {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::CaptchaStarted => "captcha_started",
+            Self::CaptchaSuccess => "captcha_success",
+            Self::CaptchaFailed => "captcha_failed",
+            Self::BanCreated => "ban_created",
+            Self::BanAutoReleased => "ban_auto_released",
+            Self::BanManualReleased => "ban_manual_released",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StatsEvent {
+    pub occurred_at: i64,
+    pub event_type: StatsEventType,
+    pub chat_id: i64,
+    pub user_id: i64,
+    pub chat_title: Option<String>,
+    pub chat_username: Option<String>,
+    pub attempts_used: Option<i64>,
+    pub attempts_total: Option<i64>,
+    pub failure_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct StatsReport {
+    pub unique_users: i64,
+    pub verification_sessions: i64,
+    pub successes: i64,
+    pub failures: i64,
+    pub timeouts: i64,
+    pub attempts_exceeded: i64,
+    pub setup_failures: i64,
+    pub bans_created: i64,
+    pub auto_releases: i64,
+    pub manual_releases: i64,
+    pub pending_bans: i64,
+    pub active_captchas: i64,
+    pub groups: Vec<StatsGroup>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StatsGroup {
+    pub chat_id: i64,
+    pub chat_title: Option<String>,
+    pub chat_username: Option<String>,
+    pub verification_sessions: i64,
+    pub successes: i64,
+    pub failures: i64,
+    pub bans_created: i64,
+}
+
 #[derive(Clone)]
 pub struct BanReleaseStore {
     db_path: String,
@@ -269,6 +333,121 @@ impl BanReleaseStore {
         .map_err(|err| err.into())
     }
 
+    pub async fn record_stats_event(
+        &self,
+        event: StatsEvent,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let path = self.db_path.clone();
+        tokio::task::spawn_blocking(move || -> Result<(), rusqlite::Error> {
+            let conn = open_db(&path)?;
+            conn.execute(
+                "INSERT INTO stats_events
+                 (occurred_at, event_type, chat_id, user_id, chat_title, chat_username,
+                  attempts_used, attempts_total, failure_reason)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    event.occurred_at,
+                    event.event_type.as_str(),
+                    event.chat_id,
+                    event.user_id,
+                    event.chat_title,
+                    event.chat_username,
+                    event.attempts_used,
+                    event.attempts_total,
+                    event.failure_reason,
+                ],
+            )?;
+            Ok(())
+        })
+        .await?
+        .map_err(|err| err.into())
+    }
+
+    pub async fn fetch_stats(
+        &self,
+        start_at: i64,
+        end_at: i64,
+    ) -> Result<StatsReport, Box<dyn Error + Send + Sync>> {
+        let path = self.db_path.clone();
+        tokio::task::spawn_blocking(move || -> Result<StatsReport, rusqlite::Error> {
+            let conn = open_db(&path)?;
+            let mut report = conn.query_row(
+                "SELECT
+                    COUNT(DISTINCT CASE WHEN event_type = 'captcha_started' THEN user_id END),
+                    COALESCE(SUM(CASE WHEN event_type = 'captcha_started' THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN event_type = 'captcha_success' THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN event_type = 'captcha_failed' THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN event_type = 'captcha_failed' AND failure_reason = 'timeout' THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN event_type = 'captcha_failed' AND failure_reason = 'attempts_exceeded' THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN event_type = 'captcha_failed' AND failure_reason = 'setup_failed' THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN event_type = 'ban_created' THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN event_type = 'ban_auto_released' THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN event_type = 'ban_manual_released' THEN 1 ELSE 0 END), 0)
+                 FROM stats_events
+                 WHERE occurred_at BETWEEN ?1 AND ?2",
+                params![start_at, end_at],
+                |row| {
+                    Ok(StatsReport {
+                        unique_users: row.get(0)?,
+                        verification_sessions: row.get(1)?,
+                        successes: row.get(2)?,
+                        failures: row.get(3)?,
+                        timeouts: row.get(4)?,
+                        attempts_exceeded: row.get(5)?,
+                        setup_failures: row.get(6)?,
+                        bans_created: row.get(7)?,
+                        auto_releases: row.get(8)?,
+                        manual_releases: row.get(9)?,
+                        ..StatsReport::default()
+                    })
+                },
+            )?;
+
+            report.pending_bans = conn.query_row("SELECT COUNT(*) FROM ban_release_jobs", [], |row| {
+                row.get(0)
+            })?;
+            report.active_captchas = conn.query_row(
+                "SELECT COUNT(*) FROM captcha_sessions",
+                [],
+                |row| row.get(0),
+            )?;
+
+            let mut stmt = conn.prepare(
+                "SELECT chat_id,
+                        MAX(chat_title),
+                        MAX(chat_username),
+                        COALESCE(SUM(CASE WHEN event_type = 'captcha_started' THEN 1 ELSE 0 END), 0),
+                        COALESCE(SUM(CASE WHEN event_type = 'captcha_success' THEN 1 ELSE 0 END), 0),
+                        COALESCE(SUM(CASE WHEN event_type = 'captcha_failed' THEN 1 ELSE 0 END), 0),
+                        COALESCE(SUM(CASE WHEN event_type = 'ban_created' THEN 1 ELSE 0 END), 0)
+                 FROM stats_events
+                 WHERE occurred_at BETWEEN ?1 AND ?2
+                 GROUP BY chat_id
+                 HAVING SUM(CASE WHEN event_type = 'captcha_started' THEN 1 ELSE 0 END) > 0
+                 ORDER BY 4 DESC, chat_id ASC
+                 LIMIT 100",
+            )?;
+            let rows = stmt.query_map(params![start_at, end_at], |row| {
+                Ok(StatsGroup {
+                    chat_id: row.get(0)?,
+                    chat_title: row.get(1)?,
+                    chat_username: row.get(2)?,
+                    verification_sessions: row.get(3)?,
+                    successes: row.get(4)?,
+                    failures: row.get(5)?,
+                    bans_created: row.get(6)?,
+                })
+            })?;
+            for row in rows {
+                report.groups.push(row?);
+            }
+
+            Ok(report)
+        })
+        .await?
+        .map_err(|err| err.into())
+    }
+
     pub async fn get_job(
         &self,
         chat_id: i64,
@@ -362,6 +541,26 @@ fn init_db(path: &str) -> Result<(), rusqlite::Error> {
         );
         CREATE INDEX IF NOT EXISTS idx_captcha_sessions_expires_at
             ON captcha_sessions (expires_at);",
+    )?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS stats_events (
+            event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            occurred_at INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            chat_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            chat_title TEXT,
+            chat_username TEXT,
+            attempts_used INTEGER,
+            attempts_total INTEGER,
+            failure_reason TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_stats_events_occurred_at
+            ON stats_events (occurred_at);
+        CREATE INDEX IF NOT EXISTS idx_stats_events_type_time
+            ON stats_events (event_type, occurred_at);
+        CREATE INDEX IF NOT EXISTS idx_stats_events_chat_time
+            ON stats_events (chat_id, occurred_at);",
     )?;
     Ok(())
 }
@@ -579,6 +778,75 @@ mod tests {
         };
         store.upsert_job(job.clone()).await.unwrap();
         assert_eq!(store.fetch_due(100).await.unwrap(), vec![job]);
+        remove_database(&path);
+    }
+
+    #[tokio::test]
+    async fn statistics_events_are_aggregated_by_period_and_group() {
+        let path = temporary_db_path("stats");
+        let store = BanReleaseStore::init(path.clone()).await.unwrap();
+        let common = |event_type, occurred_at, chat_id, user_id| StatsEvent {
+            occurred_at,
+            event_type,
+            chat_id,
+            user_id,
+            chat_title: Some("Group".to_string()),
+            chat_username: Some("group".to_string()),
+            attempts_used: None,
+            attempts_total: None,
+            failure_reason: None,
+        };
+
+        store
+            .record_stats_event(common(StatsEventType::CaptchaStarted, 100, -100, 1))
+            .await
+            .unwrap();
+        store
+            .record_stats_event(common(StatsEventType::CaptchaStarted, 110, -100, 2))
+            .await
+            .unwrap();
+        store
+            .record_stats_event(common(StatsEventType::CaptchaSuccess, 120, -100, 1))
+            .await
+            .unwrap();
+        store
+            .record_stats_event(StatsEvent {
+                failure_reason: Some("timeout".to_string()),
+                ..common(StatsEventType::CaptchaFailed, 130, -100, 2)
+            })
+            .await
+            .unwrap();
+        store
+            .record_stats_event(common(StatsEventType::BanCreated, 140, -100, 2))
+            .await
+            .unwrap();
+        store
+            .record_stats_event(common(StatsEventType::BanAutoReleased, 150, -100, 2))
+            .await
+            .unwrap();
+        store
+            .record_stats_event(common(StatsEventType::CaptchaStarted, 250, -100, 3))
+            .await
+            .unwrap();
+
+        let report = store.fetch_stats(100, 200).await.unwrap();
+        assert_eq!(report.unique_users, 2);
+        assert_eq!(report.verification_sessions, 2);
+        assert_eq!(report.successes, 1);
+        assert_eq!(report.failures, 1);
+        assert_eq!(report.timeouts, 1);
+        assert_eq!(report.bans_created, 1);
+        assert_eq!(report.auto_releases, 1);
+        assert_eq!(report.manual_releases, 0);
+        assert_eq!(report.groups.len(), 1);
+        assert_eq!(report.groups[0].verification_sessions, 2);
+        assert_eq!(report.groups[0].successes, 1);
+        assert_eq!(report.groups[0].failures, 1);
+        assert_eq!(report.groups[0].bans_created, 1);
+
+        let later_report = store.fetch_stats(201, 300).await.unwrap();
+        assert_eq!(later_report.unique_users, 1);
+        assert_eq!(later_report.verification_sessions, 1);
         remove_database(&path);
     }
 }

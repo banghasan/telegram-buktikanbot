@@ -2,7 +2,7 @@ use std::error::Error;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use chrono::{Duration as ChronoDuration, TimeZone, Utc};
+use chrono::{Datelike, Duration as ChronoDuration, TimeZone, Utc};
 use teloxide::prelude::*;
 use teloxide::types::{
     CallbackQuery, CallbackQueryId, ChatId, ChatMemberStatus, ChatMemberUpdated, ChatPermissions,
@@ -10,8 +10,11 @@ use teloxide::types::{
     LinkPreviewOptions, MaybeInaccessibleMessage, Message, MessageId, ParseMode, ReplyParameters,
     ThreadId, User, UserId,
 };
+use url::Url;
 
-use crate::ban_release::{BanReleaseJob, BanReleaseStore};
+use crate::ban_release::{
+    BanReleaseJob, BanReleaseStore, StatsEvent, StatsEventType, StatsGroup, StatsReport,
+};
 use crate::captcha::{
     CaptchaChatContext, CaptchaCheck, CaptchaSession, PendingCaptcha, SharedState, captcha_caption,
     check_captcha_answer_for_message_at, generate_captcha, generate_captcha_options,
@@ -45,6 +48,14 @@ enum CaptchaFailureReason {
 }
 
 impl CaptchaFailureReason {
+    fn code(self) -> &'static str {
+        match self {
+            Self::SetupFailed => "setup_failed",
+            Self::Timeout => "timeout",
+            Self::AttemptsExceeded => "attempts_exceeded",
+        }
+    }
+
     fn as_str(self) -> &'static str {
         match self {
             Self::SetupFailed => "verifikasi tidak dapat dimulai",
@@ -90,6 +101,20 @@ struct CaptchaFailureLog<'a> {
     attempts_total: usize,
     ban_release_at: Option<i64>,
     store: Option<&'a BanReleaseStore>,
+}
+
+async fn record_stats_event_if_available(
+    config: &Config,
+    store: Option<&BanReleaseStore>,
+    event: StatsEvent,
+    error_context: &str,
+) {
+    let Some(store) = store else {
+        return;
+    };
+    if let Err(err) = store.record_stats_event(event).await {
+        log_system_level(config, LogLevel::Warn, &format!("{error_context}: {err}"));
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -346,6 +371,17 @@ async fn start_captcha_for_user(
             return Err(err);
         }
     };
+    let stats_event = StatsEvent {
+        occurred_at: Utc::now().timestamp(),
+        event_type: StatsEventType::CaptchaStarted,
+        chat_id: session.chat_id,
+        user_id: session.user_id,
+        chat_title: session.chat_title.clone(),
+        chat_username: session.chat_username.clone(),
+        attempts_used: Some(0),
+        attempts_total: Some(session.attempts_total),
+        failure_reason: None,
+    };
     if let Err(err) = store.save_captcha_session(session).await {
         log_system_level(
             config,
@@ -381,6 +417,13 @@ async fn start_captcha_for_user(
         let mut guard = state.lock().await;
         guard.insert((chat_id, user.id), pending);
     }
+    record_stats_event_if_available(
+        config,
+        Some(store.as_ref()),
+        stats_event,
+        "failed to record captcha start statistic",
+    )
+    .await;
     log_user_event_with_chat(
         config,
         &user,
@@ -745,6 +788,22 @@ pub async fn on_text(
             return Ok(());
         }
 
+        if is_admin_stats_command(command) {
+            if !config.is_admin(user.id.0) {
+                bot.send_message(msg.chat.id, "⛔ Perintah ini khusus admin.")
+                    .await?;
+                return Ok(());
+            }
+            let Some(store) = ban_release_store.as_ref() else {
+                bot.send_message(msg.chat.id, "⚠️ Database statistik belum tersedia.")
+                    .await?;
+                return Ok(());
+            };
+            send_admin_stats_report(&bot, msg.chat.id, store, &config, StatsPeriod::Today, None)
+                .await?;
+            return Ok(());
+        }
+
         if is_command(command, "ping") {
             let start = Instant::now();
             let sent = bot
@@ -775,10 +834,16 @@ pub async fn on_text(
             return Ok(());
         }
 
-        if is_command(command, "start") {
-            let text = "🤖 *Verification Bot User*\n👤 by *bangHasan* @hasanudinhs\n👥 Support: @botindonesia";
+        if is_command(command, "start") || is_command(command, "help") {
+            let text = render_start_message(
+                config.captcha_timeout_secs,
+                config.captcha_attempts,
+                config.is_admin(user.id.0),
+            );
             bot.send_message(msg.chat.id, text)
-                .parse_mode(ParseMode::MarkdownV2)
+                .parse_mode(ParseMode::Html)
+                .link_preview_options(no_link_preview())
+                .reply_markup(build_start_keyboard())
                 .await?;
             return Ok(());
         }
@@ -788,29 +853,20 @@ pub async fn on_text(
                 crate::config::RunMode::Polling => "polling",
                 crate::config::RunMode::Webhook => "webhook",
             };
-            let log_info = if config.log_enabled {
-                format!(
-                    "enabled (level: {})",
-                    config.log_level.as_str().to_ascii_lowercase()
-                )
-            } else {
-                "disabled".to_string()
-            };
             let timezone = config.timezone.to_string();
-            let text = format!(
-                "🧩 *BuktikanBot*\n\
-📦 Version: `{}`\n\
-⚙️ Mode: `{}`\n\
-🪵 Log: `{}`\n\
-🕒 Timezone: `{}`",
-                escape_markdown_v2(env!("CARGO_PKG_VERSION")),
-                escape_markdown_v2(run_mode),
-                escape_markdown_v2(&log_info),
-                escape_markdown_v2(&timezone)
-            );
+            let text = render_version_message(VersionInfo {
+                app_version: env!("CARGO_PKG_VERSION"),
+                run_mode,
+                log_enabled: config.log_enabled,
+                log_level: config.log_level.as_str(),
+                ban_release_enabled: config.ban_release_enabled,
+                ban_release_after_secs: config.ban_release_after_secs,
+                timezone: &timezone,
+                is_admin: config.is_admin(user.id.0),
+            });
             if let Err(err) = bot
                 .send_message(msg.chat.id, text)
-                .parse_mode(ParseMode::MarkdownV2)
+                .parse_mode(ParseMode::Html)
                 .link_preview_options(no_link_preview())
                 .await
             {
@@ -830,6 +886,322 @@ pub async fn on_text(
     }
 
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StatsPeriod {
+    Today,
+    SevenDays,
+    ThirtyDays,
+    All,
+}
+
+impl StatsPeriod {
+    fn callback_key(self) -> &'static str {
+        match self {
+            Self::Today => "today",
+            Self::SevenDays => "7d",
+            Self::ThirtyDays => "30d",
+            Self::All => "all",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Today => "Hari ini",
+            Self::SevenDays => "7 hari terakhir",
+            Self::ThirtyDays => "30 hari terakhir",
+            Self::All => "Semua data",
+        }
+    }
+
+    fn from_callback_key(key: &str) -> Option<Self> {
+        match key {
+            "today" => Some(Self::Today),
+            "7d" => Some(Self::SevenDays),
+            "30d" => Some(Self::ThirtyDays),
+            "all" => Some(Self::All),
+            _ => None,
+        }
+    }
+}
+
+fn stats_period_bounds(config: &Config, period: StatsPeriod, now: i64) -> (i64, i64) {
+    let start = match period {
+        StatsPeriod::Today => {
+            let local_now = config.timezone.timestamp_opt(now, 0).single();
+            local_now
+                .and_then(|value| {
+                    config
+                        .timezone
+                        .with_ymd_and_hms(value.year(), value.month(), value.day(), 0, 0, 0)
+                        .single()
+                })
+                .map(|value| value.timestamp())
+                .unwrap_or_else(|| now.saturating_sub(24 * 60 * 60))
+        }
+        StatsPeriod::SevenDays => now.saturating_sub(7 * 24 * 60 * 60),
+        StatsPeriod::ThirtyDays => now.saturating_sub(30 * 24 * 60 * 60),
+        StatsPeriod::All => 0,
+    };
+    (start, now)
+}
+
+fn render_stats_period(config: &Config, period: StatsPeriod, start_at: i64, end_at: i64) -> String {
+    match period {
+        StatsPeriod::All => "Semua data yang tersimpan".to_string(),
+        _ => format!(
+            "{} ({} s.d. {})",
+            period.label(),
+            format_log_timestamp(config, start_at),
+            format_log_timestamp(config, end_at)
+        ),
+    }
+}
+
+async fn send_admin_stats_report(
+    bot: &Bot,
+    chat_id: ChatId,
+    store: &BanReleaseStore,
+    config: &Config,
+    period: StatsPeriod,
+    message_id: Option<MessageId>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let generated_at = Utc::now().timestamp();
+    let (start_at, end_at) = stats_period_bounds(config, period, generated_at);
+    let report = store.fetch_stats(start_at, end_at).await?;
+    let period_label = render_stats_period(config, period, start_at, end_at);
+    let summary = render_admin_stats_summary(config, &report, &period_label, generated_at);
+    let keyboard = build_admin_stats_keyboard(period);
+
+    if let Some(message_id) = message_id {
+        bot.edit_message_text(chat_id, message_id, summary)
+            .parse_mode(ParseMode::Html)
+            .link_preview_options(no_link_preview())
+            .reply_markup(keyboard)
+            .await?;
+    } else {
+        bot.send_message(chat_id, summary)
+            .parse_mode(ParseMode::Html)
+            .link_preview_options(no_link_preview())
+            .reply_markup(keyboard)
+            .await?;
+    }
+
+    let markdown = render_admin_stats_markdown(
+        config,
+        &report,
+        &period_label,
+        generated_at,
+        start_at,
+        end_at,
+    );
+    let filename = format_stats_filename(config, generated_at);
+    let caption = format!(
+        "📊 <b>Laporan statistik BuktikanBot</b>\n\
+         Periode: {}\n\
+         Dicetak: {}",
+        escape_html(&period_label),
+        escape_html(&format_log_timestamp(config, generated_at))
+    );
+    bot.send_document(
+        chat_id,
+        InputFile::memory(markdown.into_bytes()).file_name(filename),
+    )
+    .caption(caption)
+    .parse_mode(ParseMode::Html)
+    .await?;
+    Ok(())
+}
+
+fn render_admin_stats_summary(
+    config: &Config,
+    report: &StatsReport,
+    period_label: &str,
+    generated_at: i64,
+) -> String {
+    let completed = report.successes.saturating_add(report.failures);
+    let success_rate = percentage(report.successes, completed);
+    [
+        "<b>📊 Statistik BuktikanBot</b>".to_string(),
+        format!("📅 Periode: {}", escape_html(period_label)),
+        format!(
+            "🖨️ Dicetak: <code>{}</code>",
+            escape_html(&format_log_timestamp(config, generated_at))
+        ),
+        String::new(),
+        format!(
+            "👥 User unik dilayani: <code>{}</code>",
+            report.unique_users
+        ),
+        format!(
+            "🧩 Sesi verifikasi: <code>{}</code>",
+            report.verification_sessions
+        ),
+        format!("✅ Berhasil: <code>{}</code>", report.successes),
+        format!("❌ Gagal: <code>{}</code>", report.failures),
+        format!("📈 Tingkat sukses: <code>{}</code>", success_rate),
+        format!("  ├⏰ Timeout: <code>{}</code>", report.timeouts),
+        format!(
+            "  ├🔁 Percobaan habis: <code>{}</code>",
+            report.attempts_exceeded
+        ),
+        format!(
+            "  └⚙️ Gagal menyiapkan: <code>{}</code>",
+            report.setup_failures
+        ),
+        format!("🚫 Ban dibuat: <code>{}</code>", report.bans_created),
+        format!("♻️ Auto-release: <code>{}</code>", report.auto_releases),
+        format!("🛠️ Manual release: <code>{}</code>", report.manual_releases),
+        String::new(),
+        format!("⏳ Pending saat ini: <code>{}</code>", report.pending_bans),
+        format!(
+            "🔐 CAPTCHA aktif saat ini: <code>{}</code>",
+            report.active_captchas
+        ),
+        format!("👥 Grup terdata: <code>{}</code>", report.groups.len()),
+    ]
+    .join("\n")
+}
+
+fn build_admin_stats_keyboard(period: StatsPeriod) -> InlineKeyboardMarkup {
+    InlineKeyboardMarkup::new(vec![
+        vec![
+            InlineKeyboardButton::callback(
+                "📅 Hari ini",
+                format!("stats:{}", StatsPeriod::Today.callback_key()),
+            ),
+            InlineKeyboardButton::callback(
+                "7 hari",
+                format!("stats:{}", StatsPeriod::SevenDays.callback_key()),
+            ),
+            InlineKeyboardButton::callback(
+                "30 hari",
+                format!("stats:{}", StatsPeriod::ThirtyDays.callback_key()),
+            ),
+            InlineKeyboardButton::callback(
+                "Semua",
+                format!("stats:{}", StatsPeriod::All.callback_key()),
+            ),
+        ],
+        vec![InlineKeyboardButton::callback(
+            format!("🔄 Refresh ({})", period.label()),
+            format!("stats:{}", period.callback_key()),
+        )],
+    ])
+}
+
+fn render_admin_stats_markdown(
+    config: &Config,
+    report: &StatsReport,
+    period_label: &str,
+    generated_at: i64,
+    start_at: i64,
+    end_at: i64,
+) -> String {
+    let completed = report.successes.saturating_add(report.failures);
+    let success_rate = percentage(report.successes, completed);
+    let mut lines = vec![
+        "# 📊 Statistik BuktikanBot".to_string(),
+        String::new(),
+        format!(
+            "- Dicetak pada: {}",
+            format_log_timestamp(config, generated_at)
+        ),
+        format!("- Zona waktu: {}", config.timezone),
+        format!("- Periode: {period_label}"),
+        format!(
+            "- Data dihitung sampai: {}",
+            format_log_timestamp(config, end_at)
+        ),
+        String::new(),
+        "## Ringkasan".to_string(),
+        String::new(),
+        "| Metrik | Jumlah |".to_string(),
+        "|---|---:|".to_string(),
+        format!("| User unik dilayani | {} |", report.unique_users),
+        format!("| Sesi verifikasi | {} |", report.verification_sessions),
+        format!("| Berhasil | {} |", report.successes),
+        format!("| Gagal | {} |", report.failures),
+        format!("| Tingkat keberhasilan | {success_rate} |"),
+        format!("| Timeout | {} |", report.timeouts),
+        format!("| Percobaan habis | {} |", report.attempts_exceeded),
+        format!("| Gagal menyiapkan | {} |", report.setup_failures),
+        format!("| Ban dibuat | {} |", report.bans_created),
+        format!("| Auto-release | {} |", report.auto_releases),
+        format!("| Manual release | {} |", report.manual_releases),
+        format!("| Pending saat ini | {} |", report.pending_bans),
+        format!("| CAPTCHA aktif saat ini | {} |", report.active_captchas),
+        String::new(),
+        "## Statistik Per Grup".to_string(),
+        String::new(),
+    ];
+
+    if report.groups.is_empty() {
+        lines.push("_Belum ada data verifikasi pada periode ini._".to_string());
+    } else {
+        lines.extend([
+            "| Grup | Sesi | Sukses | Gagal | Ban |".to_string(),
+            "|---|---:|---:|---:|---:|".to_string(),
+        ]);
+        for group in &report.groups {
+            let label = markdown_group_label(group);
+            lines.push(format!(
+                "| {} | {} | {} | {} | {} |",
+                markdown_table_cell(&label),
+                group.verification_sessions,
+                group.successes,
+                group.failures,
+                group.bans_created
+            ));
+        }
+        if report.groups.len() == 100 {
+            lines.push(String::new());
+            lines.push("_Catatan: laporan menampilkan maksimal 100 grup._".to_string());
+        }
+    }
+
+    lines.extend([
+        String::new(),
+        "## Catatan".to_string(),
+        String::new(),
+        format!("- Rentang data Unix timestamp: {start_at} sampai {end_at}."),
+        "- Statistik historis dicatat sejak fitur statistik diaktifkan.".to_string(),
+        "- Pending ban dan CAPTCHA aktif menunjukkan kondisi saat laporan dibuat.".to_string(),
+    ]);
+    lines.join("\n")
+}
+
+fn markdown_group_label(group: &StatsGroup) -> String {
+    match (group.chat_username.as_deref(), group.chat_title.as_deref()) {
+        (Some(username), Some(title)) => format!("@{} : {}", username.trim(), title.trim()),
+        (Some(username), None) => format!("@{}", username.trim()),
+        (None, Some(title)) => title.trim().to_string(),
+        (None, None) => format!("chat {}", group.chat_id),
+    }
+}
+
+fn markdown_table_cell(input: &str) -> String {
+    sanitize_log_text(input)
+        .replace('\\', "\\\\")
+        .replace('|', "\\|")
+}
+
+fn percentage(numerator: i64, denominator: i64) -> String {
+    if denominator <= 0 {
+        return "0.0%".to_string();
+    }
+    format!("{:.1}%", numerator as f64 * 100.0 / denominator as f64)
+}
+
+fn format_stats_filename(config: &Config, timestamp: i64) -> String {
+    let stamp = config
+        .timezone
+        .timestamp_opt(timestamp, 0)
+        .single()
+        .map(|value| value.format("%Y-%m-%d-%H%M%S").to_string())
+        .unwrap_or_else(|| timestamp.to_string());
+    format!("buktikanbot-statistik-{stamp}.md")
 }
 
 async fn send_admin_pending_panel(
@@ -1015,7 +1387,7 @@ pub async fn on_callback_query(
     let Some(data) = data.as_deref() else {
         return Ok(());
     };
-    if data.starts_with("admin:") {
+    if data.starts_with("admin:") || data.starts_with("stats:") {
         return on_admin_callback(&bot, id, &from, data, message, &config, ban_release_store).await;
     }
     if !data.starts_with("captcha:") {
@@ -1419,6 +1791,32 @@ pub async fn on_callback_query(
                 },
             )
             .await;
+            record_stats_event_if_available(
+                &config,
+                Some(store.as_ref()),
+                StatsEvent {
+                    occurred_at: Utc::now().timestamp(),
+                    event_type: StatsEventType::CaptchaSuccess,
+                    chat_id: chat_id.0,
+                    user_id: user_id_i64,
+                    chat_title,
+                    chat_username,
+                    attempts_used: Some(
+                        i64::try_from(
+                            pending
+                                .attempts_total
+                                .saturating_sub(pending.attempts_left)
+                                .saturating_add(1)
+                                .min(pending.attempts_total),
+                        )
+                        .unwrap_or(i64::MAX),
+                    ),
+                    attempts_total: Some(i64::try_from(pending.attempts_total).unwrap_or(i64::MAX)),
+                    failure_reason: None,
+                },
+                "failed to record captcha success statistic",
+            )
+            .await;
         }
     }
 
@@ -1468,6 +1866,20 @@ async fn on_admin_callback(
             .await;
         return Ok(());
     };
+
+    if let Some(period) = parse_stats_callback(data) {
+        send_admin_stats_report(
+            bot,
+            message.chat.id,
+            store,
+            config,
+            period,
+            Some(message.id),
+        )
+        .await?;
+        let _ = bot.answer_callback_query(callback_id).await;
+        return Ok(());
+    }
 
     if let Some(page) = parse_admin_page_callback(data, "refresh") {
         send_admin_pending_panel(bot, message.chat.id, store, config, page, Some(message.id))
@@ -1567,6 +1979,132 @@ fn is_admin_pending_command(input: &str) -> bool {
     is_command(input, "pending") || is_command(input, "bans")
 }
 
+fn is_admin_stats_command(input: &str) -> bool {
+    is_command(input, "stats") || is_command(input, "statistic") || is_command(input, "statistik")
+}
+
+fn parse_stats_callback(data: &str) -> Option<StatsPeriod> {
+    let mut parts = data.split(':');
+    if parts.next() != Some("stats") {
+        return None;
+    }
+    let period = StatsPeriod::from_callback_key(parts.next()?)?;
+    parts.next().is_none().then_some(period)
+}
+
+const SUPPORT_GROUP_URL: &str = "https://t.me/botindonesia";
+
+fn render_start_message(timeout_secs: u64, attempts: usize, is_admin: bool) -> String {
+    let mut lines = vec![
+        "<b>🤖 BuktikanBot</b>".to_string(),
+        "Bot untuk membantu memverifikasi anggota baru grup menggunakan CAPTCHA.".to_string(),
+        String::new(),
+        "<b>📋 Cara kerja</b>".to_string(),
+        "1. Setelah bergabung, bot mengirim CAPTCHA bergambar.".to_string(),
+        "2. Pilih jawaban melalui tombol yang tersedia.".to_string(),
+        "3. Jawaban benar memulihkan akses ke grup.".to_string(),
+        "4. Jawaban salah berulang atau waktu habis mengeluarkan user dari grup.".to_string(),
+        format!("⏱️ Waktu verifikasi: <code>{timeout_secs} detik</code>."),
+        format!("🔁 Kesempatan menjawab: <code>{attempts}</code>."),
+        "🔒 Selama verifikasi, user tidak dapat mengirim pesan; cukup gunakan tombol CAPTCHA."
+            .to_string(),
+        String::new(),
+        "<b>📚 Perintah</b>".to_string(),
+        "• <code>/start</code> atau <code>/help</code> — tampilkan panduan ini.".to_string(),
+        "• <code>/ping</code> — cek respons bot.".to_string(),
+        "• <code>/ver</code> — lihat versi aplikasi.".to_string(),
+    ];
+
+    if is_admin {
+        lines.extend([
+            String::new(),
+            "<b>🛡️ Perintah Admin</b>".to_string(),
+            "• <code>/pending</code> atau <code>/bans</code> — lihat ban yang menunggu release dan lepaskan melalui tombol.".to_string(),
+            "• <code>/stats</code>, <code>/statistic</code>, atau <code>/statistik</code> — kirim ringkasan dan laporan statistik dalam file Markdown.".to_string(),
+        ]);
+    }
+
+    lines.extend([
+        String::new(),
+        "👤 Pengembang: <b>bangHasan</b> @hasanudinhs".to_string(),
+        "💬 Bantuan tersedia melalui tombol grup support di bawah.".to_string(),
+    ]);
+    lines.join("\n")
+}
+
+fn build_start_keyboard() -> InlineKeyboardMarkup {
+    InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::url(
+        "💬 Grup Support @botindonesia",
+        Url::parse(SUPPORT_GROUP_URL).expect("support group URL must be valid"),
+    )]])
+}
+
+struct VersionInfo<'a> {
+    app_version: &'a str,
+    run_mode: &'a str,
+    log_enabled: bool,
+    log_level: &'a str,
+    ban_release_enabled: bool,
+    ban_release_after_secs: u64,
+    timezone: &'a str,
+    is_admin: bool,
+}
+
+fn render_version_message(info: VersionInfo<'_>) -> String {
+    let mut lines = vec![
+        "<b>🧩 BuktikanBot</b>".to_string(),
+        String::new(),
+        format!("📦 Versi: <code>{}</code>", escape_html(info.app_version)),
+        "✅ Status: aktif".to_string(),
+    ];
+
+    if info.is_admin {
+        let auto_unban = if info.ban_release_enabled {
+            format!(
+                "aktif — {}",
+                escape_html(&format_duration(info.ban_release_after_secs))
+            )
+        } else {
+            "nonaktif".to_string()
+        };
+        let logging = if info.log_enabled {
+            format!("aktif — {}", escape_html(info.log_level))
+        } else {
+            "nonaktif".to_string()
+        };
+        lines.extend([
+            String::new(),
+            "<b>🛠️ Informasi runtime</b>".to_string(),
+            format!("⚙️ Mode: <code>{}</code>", escape_html(info.run_mode)),
+            format!("🔓 Auto-unban: <code>{auto_unban}</code>"),
+            format!("🪵 Logging: <code>{logging}</code>"),
+            format!("🕒 Zona waktu: <code>{}</code>", escape_html(info.timezone)),
+        ]);
+    }
+
+    lines.extend([
+        String::new(),
+        "Gunakan <code>/help</code> untuk melihat panduan penggunaan.".to_string(),
+    ]);
+    lines.join("\n")
+}
+
+fn format_duration(seconds: u64) -> String {
+    const DAY: u64 = 24 * 60 * 60;
+    const HOUR: u64 = 60 * 60;
+    const MINUTE: u64 = 60;
+
+    if seconds >= DAY && seconds.is_multiple_of(DAY) {
+        format!("{} hari", seconds / DAY)
+    } else if seconds >= HOUR && seconds.is_multiple_of(HOUR) {
+        format!("{} jam", seconds / HOUR)
+    } else if seconds >= MINUTE && seconds.is_multiple_of(MINUTE) {
+        format!("{} menit", seconds / MINUTE)
+    } else {
+        format!("{seconds} detik")
+    }
+}
+
 fn parse_admin_page_callback(data: &str, action: &str) -> Option<usize> {
     let mut parts = data.split(':');
     (parts.next() == Some("admin") && parts.next() == Some(action))
@@ -1642,6 +2180,26 @@ async fn ban_user_and_maybe_release(
             &err,
         );
         return BanResult::default();
+    }
+
+    if let Ok(user_id) = i64::try_from(user_id.0) {
+        record_stats_event_if_available(
+            config,
+            ban_release_store.as_deref(),
+            StatsEvent {
+                occurred_at: Utc::now().timestamp(),
+                event_type: StatsEventType::BanCreated,
+                chat_id: chat_id.0,
+                user_id,
+                chat_title: chat_title.clone(),
+                chat_username: chat_username.clone(),
+                attempts_used: None,
+                attempts_total: None,
+                failure_reason: None,
+            },
+            "failed to record ban statistic",
+        )
+        .await;
     }
 
     let release_at = config
@@ -1733,21 +2291,6 @@ fn is_version_command(input: &str) -> bool {
     matches!(cmd, "/ver" | "/versi" | "/version")
 }
 
-fn escape_markdown_v2(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    for ch in input.chars() {
-        match ch {
-            '_' | '*' | '[' | ']' | '(' | ')' | '~' | '`' | '>' | '#' | '+' | '-' | '=' | '|'
-            | '{' | '}' | '.' | '!' => {
-                out.push('\\');
-                out.push(ch);
-            }
-            _ => out.push(ch),
-        }
-    }
-    out
-}
-
 fn option_to_display(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
@@ -1815,6 +2358,25 @@ async fn log_captcha_failure_and_attach(
         ban_release_at,
         store,
     } = failure;
+    if let Ok(user_id) = i64::try_from(context.user.id.0) {
+        record_stats_event_if_available(
+            config,
+            store,
+            StatsEvent {
+                occurred_at: Utc::now().timestamp(),
+                event_type: StatsEventType::CaptchaFailed,
+                chat_id: context.chat_id.0,
+                user_id,
+                chat_title: context.chat_title.map(str::to_string),
+                chat_username: context.chat_username.map(str::to_string),
+                attempts_used: Some(i64::try_from(attempts_used).unwrap_or(i64::MAX)),
+                attempts_total: Some(i64::try_from(attempts_total).unwrap_or(i64::MAX)),
+                failure_reason: Some(reason.code().to_string()),
+            },
+            "failed to record captcha failure statistic",
+        )
+        .await;
+    }
     let reference = send_captcha_log_if_enabled(
         bot,
         config,
@@ -1990,6 +2552,26 @@ pub async fn release_ban_job(
         .only_if_banned(true)
         .await?;
     if store.delete_job(job.chat_id, job.user_id).await? {
+        let event_type = released_by
+            .map(|_| StatsEventType::BanManualReleased)
+            .unwrap_or(StatsEventType::BanAutoReleased);
+        record_stats_event_if_available(
+            config,
+            Some(store),
+            StatsEvent {
+                occurred_at: Utc::now().timestamp(),
+                event_type,
+                chat_id: job.chat_id,
+                user_id: job.user_id,
+                chat_title: job.chat_title.clone(),
+                chat_username: job.chat_username.clone(),
+                attempts_used: None,
+                attempts_total: None,
+                failure_reason: None,
+            },
+            "failed to record ban release statistic",
+        )
+        .await;
         send_ban_release_log_if_enabled(bot, config, job, released_by).await;
     }
     Ok(())
@@ -2093,12 +2675,110 @@ fn no_link_preview() -> LinkPreviewOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use teloxide::types::InlineKeyboardButtonKind;
 
     #[test]
     fn admin_pending_commands_accept_the_documented_aliases() {
         assert!(is_admin_pending_command("/pending"));
         assert!(is_admin_pending_command("/bans@buktikanbot"));
         assert!(!is_admin_pending_command("/pending-now"));
+    }
+
+    #[test]
+    fn admin_stats_commands_accept_the_documented_aliases() {
+        assert!(is_admin_stats_command("/stats"));
+        assert!(is_admin_stats_command("/statistic@buktikanbot"));
+        assert!(is_admin_stats_command("/statistik"));
+        assert!(!is_admin_stats_command("/stats-now"));
+    }
+
+    #[test]
+    fn stats_callback_parser_rejects_unknown_or_extra_data() {
+        assert_eq!(
+            parse_stats_callback("stats:7d"),
+            Some(StatsPeriod::SevenDays)
+        );
+        assert_eq!(parse_stats_callback("stats:unknown"), None);
+        assert_eq!(parse_stats_callback("stats:today:extra"), None);
+        assert_eq!(parse_stats_callback("admin:today"), None);
+    }
+
+    #[test]
+    fn start_and_help_commands_share_the_onboarding_message() {
+        assert!(is_command("/start", "start"));
+        assert!(is_command("/help@buktikanbot", "help"));
+        assert!(!is_command("/health", "help"));
+
+        let regular = render_start_message(100, 3, false);
+        assert!(regular.contains("/help"));
+        assert!(!regular.contains("/pending"));
+    }
+
+    #[test]
+    fn start_message_includes_admin_commands_for_registered_admin() {
+        let admin = render_start_message(100, 3, true);
+        assert!(admin.contains("/pending"));
+        assert!(admin.contains("/bans"));
+    }
+
+    #[test]
+    fn start_keyboard_links_to_support_group() {
+        let keyboard = build_start_keyboard();
+        assert_eq!(keyboard.inline_keyboard.len(), 1);
+        assert_eq!(keyboard.inline_keyboard[0].len(), 1);
+        let button = &keyboard.inline_keyboard[0][0];
+        assert_eq!(button.text, "💬 Grup Support @botindonesia");
+        assert!(matches!(
+            &button.kind,
+            InlineKeyboardButtonKind::Url(url) if url.as_str() == SUPPORT_GROUP_URL
+        ));
+    }
+
+    #[test]
+    fn version_message_hides_runtime_details_for_regular_users() {
+        let text = render_version_message(VersionInfo {
+            app_version: "1.10.0",
+            run_mode: "webhook",
+            log_enabled: true,
+            log_level: "INFO",
+            ban_release_enabled: true,
+            ban_release_after_secs: 14_400,
+            timezone: "Asia/Jakarta",
+            is_admin: false,
+        });
+        assert!(text.contains("Versi: <code>1.10.0</code>"));
+        assert!(text.contains("Status: aktif"));
+        assert!(text.contains("/help"));
+        assert!(!text.contains("Mode:"));
+        assert!(!text.contains("Auto-unban:"));
+        assert!(!text.contains("Logging:"));
+        assert!(!text.contains("Asia/Jakarta"));
+    }
+
+    #[test]
+    fn version_message_shows_runtime_details_for_admins() {
+        let text = render_version_message(VersionInfo {
+            app_version: "1.10.0",
+            run_mode: "webhook",
+            log_enabled: true,
+            log_level: "INFO",
+            ban_release_enabled: true,
+            ban_release_after_secs: 14_400,
+            timezone: "Asia/Jakarta",
+            is_admin: true,
+        });
+        assert!(text.contains("Mode: <code>webhook</code>"));
+        assert!(text.contains("Auto-unban: <code>aktif — 4 jam</code>"));
+        assert!(text.contains("Logging: <code>aktif — INFO</code>"));
+        assert!(text.contains("Zona waktu: <code>Asia/Jakarta</code>"));
+    }
+
+    #[test]
+    fn version_duration_uses_readable_units() {
+        assert_eq!(format_duration(60), "1 menit");
+        assert_eq!(format_duration(14_400), "4 jam");
+        assert_eq!(format_duration(172_800), "2 hari");
+        assert_eq!(format_duration(90), "90 detik");
     }
 
     #[test]

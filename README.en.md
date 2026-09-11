@@ -14,6 +14,7 @@ A Telegram bot that verifies new group members using an image CAPTCHA. When a us
 - Wrong answers are cleared; timeout or too many wrong attempts: user is removed.
 - Inline buttons for answers, reshuffled after a wrong answer.
 - Private admin panel to inspect pending ban releases and release them with inline buttons.
+- Admin statistics reports are sent as a short summary and a Markdown document, with period filters and per-group statistics.
 
 ## Requirements
 - A Telegram bot created via BotFather.
@@ -83,7 +84,7 @@ TIMEZONE=Asia/Jakarta
 
 Environment variables:
 - `BOT_TOKEN`: Telegram bot token.
-- `ADMIN_USER_IDS`: comma-separated Telegram user IDs allowed to use `/pending` and `/bans` in private chat. Use numeric `from.id` values, not usernames. Leave empty to disable the admin panel.
+- `ADMIN_USER_IDS`: comma-separated Telegram user IDs allowed to use admin commands such as `/pending`, `/bans`, and `/stats` in private chat. Use numeric `from.id` values, not usernames. Leave empty to disable admin features.
 - `CAPTCHA_LEN`: CAPTCHA text length.
 - `CAPTCHA_TIMEOUT_SECONDS`: maximum time to solve.
 - `CAPTCHA_CAPTION_UPDATE_SECONDS`: caption countdown update interval (default 10 seconds).
@@ -117,6 +118,9 @@ builds, CI, and releases use the same version.
 Dependency notes and future-incompatibility warnings to monitor are documented
 in [`docs/known-issues/`](./docs/known-issues/).
 
+The admin statistics design and report contents are documented in
+[`docs/statistics.md`](./docs/statistics.md).
+
 For webhook mode, see [`WEBHOOK.md`](./WEBHOOK.md).
 
 Docker note: if you use the Docker image, the sample env file is located at
@@ -132,12 +136,15 @@ sudo chown 10001:10001 ./data
 Alternatively (less secure), run the container as root with `user: "0:0"` in `docker-compose.yml`.
 
 ## Bot Commands (Private)
-- `/start`: bot info.
+- `/start` or `/help`: bot usage guide.
 - `/ping`: response time check.
-- `/ver`, `/versi`, `/version`: app version info.
+- `/ver`, `/versi`, `/version`: app version and status; registered admins also see runtime information.
 - `/pending` or `/bans`: admin panel listing ban-release jobs still stored in SQLite. Only users in `ADMIN_USER_IDS` can use it. The panel provides pagination, refresh, and inline release buttons with a second confirmation step.
+- `/stats`, `/statistic`, or `/statistik`: admin-only statistics report. The bot sends a short summary and a complete Markdown file with the period, print time, per-group statistics, and current pending state. Inline buttons select today, 7 days, 30 days, or all data.
 
 The admin panel only lists bans created and recorded by this bot while `BAN_RELEASE_ENABLED=true`; manually created bans or bans created by another bot cannot be discovered from this database. After a successful manual release, the SQLite job is deleted and the release log is sent to the configured log chat/topic, replying to the related failure log when the parent message is still available. Manual logs also include the admin ID that performed the release.
+
+Historical statistics are stored in SQLite from the time this feature is available. Data from before the feature was enabled cannot be reconstructed perfectly from the CAPTCHA-session and pending-ban tables.
 
 ## Versioning
 

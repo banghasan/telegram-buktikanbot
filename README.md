@@ -28,6 +28,7 @@ dan hak akses user dipulihkan.
 - Jawaban salah terhapus, jika timeout: kick user dari grup.
 - User terverifikasi, hak akses grup dipulihkan.
 - Panel admin private untuk melihat ban yang menunggu release dan melepasnya dengan tombol inline.
+- Laporan statistik admin dalam pesan ringkas dan dokumen Markdown, dengan filter periode serta statistik per grup.
 
 ## Persyaratan
 - Bot Telegram yang sudah dibuat lewat BotFather.
@@ -97,7 +98,7 @@ TIMEZONE=Asia/Jakarta
 
 Keterangan variabel:
 - `BOT_TOKEN`: token bot Telegram.
-- `ADMIN_USER_IDS`: daftar ID user Telegram yang boleh memakai `/pending` dan `/bans` di private chat, dipisahkan koma. Gunakan ID numerik dari `from.id`, bukan username. Kosongkan untuk menonaktifkan panel admin.
+- `ADMIN_USER_IDS`: daftar ID user Telegram yang boleh memakai perintah admin seperti `/pending`, `/bans`, dan `/stats` di private chat, dipisahkan koma. Gunakan ID numerik dari `from.id`, bukan username. Kosongkan untuk menonaktifkan fitur admin.
 - `CAPTCHA_LEN`: panjang karakter CAPTCHA.
 - `CAPTCHA_TIMEOUT_SECONDS`: waktu maksimum menebak.
 - `CAPTCHA_CAPTION_UPDATE_SECONDS`: interval update caption countdown (default 10 detik).
@@ -129,7 +130,10 @@ Toolchain Rust dikunci pada versi `1.98.1` melalui `rust-toolchain.toml` agar
 build lokal, CI, dan release menggunakan versi yang konsisten.
 
 Catatan dependency dan warning future-incompatibility yang perlu dipantau ada di
-[`docs/known-issues/`](./docs/known-issues/).
+[docs/known-issues/](./docs/known-issues/).
+
+Detail desain dan isi laporan statistik admin tersedia di
+[docs/statistics.md](./docs/statistics.md).
 
 Jika ingin menjalankan mode webhook, lihat panduan lengkap di [`WEBHOOK.md`](./WEBHOOK.md).
 
@@ -146,12 +150,15 @@ sudo chown 10001:10001 ./data
 Alternatif (kurang aman), jalankan container sebagai root dengan `user: "0:0"` di `docker-compose.yml`.
 
 ## Perintah Bot (Private)
-- `/start`: info bot.
+- `/start` atau `/help`: panduan penggunaan bot.
 - `/ping`: cek response time.
-- `/ver`, `/versi`, `/version`: info versi aplikasi.
+- `/ver`, `/versi`, `/version`: versi dan status bot; admin terdaftar juga melihat informasi runtime.
 - `/pending` atau `/bans`: panel admin berisi daftar ban yang masih tersimpan di SQLite. Hanya user pada `ADMIN_USER_IDS` yang dapat menggunakannya. Panel menyediakan pagination, refresh, dan release melalui tombol inline dengan konfirmasi kedua.
+- `/stats`, `/statistic`, atau `/statistik`: laporan statistik khusus admin. Bot mengirim ringkasan singkat dan file Markdown lengkap dengan periode, waktu cetak, statistik per grup, serta kondisi pending saat ini. Tombol inline tersedia untuk memilih hari ini, 7 hari, 30 hari, atau semua data.
 
 Panel admin hanya mencantumkan ban yang dibuat dan dicatat oleh bot ketika `BAN_RELEASE_ENABLED=true`; ban manual atau ban dari bot lain tidak dapat dideteksi dari database ini. Saat release manual berhasil, job dihapus dari SQLite dan log pelepasan tetap dikirim ke chat/topic log sebagai reply ke log kegagalan terkait jika pesan parent masih tersedia. Log manual juga mencatat ID admin yang melakukan release.
+
+Statistik historis disimpan di SQLite sejak fitur statistik tersedia. Data sebelum fitur ini aktif tidak dapat direkonstruksi secara sempurna dari tabel sesi CAPTCHA dan pending ban.
 
 ## Versioning
 
