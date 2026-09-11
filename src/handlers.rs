@@ -2,7 +2,7 @@ use std::error::Error;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use chrono::{Duration as ChronoDuration, Utc};
+use chrono::{Duration as ChronoDuration, TimeZone, Utc};
 use teloxide::prelude::*;
 use teloxide::types::{
     CallbackQuery, ChatMemberStatus, ChatMemberUpdated, ChatPermissions, InlineKeyboardButton,
@@ -31,6 +31,67 @@ struct BanRequest {
     user_username: Option<String>,
     ban_release_store: Option<Arc<BanReleaseStore>>,
     error_context: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CaptchaFailureReason {
+    SetupFailed,
+    Timeout,
+    AttemptsExceeded,
+}
+
+impl CaptchaFailureReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::SetupFailed => "verifikasi tidak dapat dimulai",
+            Self::Timeout => "waktu habis",
+            Self::AttemptsExceeded => "jumlah percobaan habis",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CaptchaLogOutcome {
+    Success {
+        attempts_used: usize,
+        attempts_total: usize,
+    },
+    Failure {
+        reason: CaptchaFailureReason,
+        attempts_used: usize,
+        attempts_total: usize,
+        ban_release_at: Option<i64>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CaptchaLogReference {
+    chat_id: i64,
+    message_thread_id: Option<i32>,
+    message_id: i32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CaptchaLogContext<'a> {
+    user: &'a teloxide::types::User,
+    chat_id: ChatId,
+    chat_title: Option<&'a str>,
+    chat_username: Option<&'a str>,
+}
+
+struct CaptchaFailureLog<'a> {
+    context: CaptchaLogContext<'a>,
+    reason: CaptchaFailureReason,
+    attempts_used: usize,
+    attempts_total: usize,
+    ban_release_at: Option<i64>,
+    store: Option<&'a BanReleaseStore>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct BanResult {
+    banned: bool,
+    release_at: Option<i64>,
 }
 
 impl BanRequest {
@@ -178,7 +239,7 @@ async fn start_captcha_for_user(
             "failed to restrict user",
             &err,
         );
-        ban_user_and_maybe_release(
+        let ban_result = ban_user_and_maybe_release(
             bot,
             config,
             BanRequest {
@@ -193,6 +254,26 @@ async fn start_captcha_for_user(
             },
         )
         .await;
+        if ban_result.banned {
+            log_captcha_failure_and_attach(
+                bot,
+                config,
+                CaptchaFailureLog {
+                    context: CaptchaLogContext {
+                        user: &user,
+                        chat_id,
+                        chat_title: chat.title.as_deref(),
+                        chat_username: chat.username.as_deref(),
+                    },
+                    reason: CaptchaFailureReason::SetupFailed,
+                    attempts_used: 0,
+                    attempts_total: config.captcha_attempts,
+                    ban_release_at: ban_result.release_at,
+                    store: ban_release_store.as_deref(),
+                },
+            )
+            .await;
+        }
         return Ok(());
     }
 
@@ -375,7 +456,7 @@ fn spawn_captcha_lifecycle(
         };
 
         if let Some(pending) = pending {
-            let banned = ban_user_and_maybe_release(
+            let ban_result = ban_user_and_maybe_release(
                 &bot,
                 &config,
                 BanRequest::from_pending(
@@ -387,7 +468,7 @@ fn spawn_captcha_lifecycle(
                 ),
             )
             .await;
-            if !banned {
+            if !ban_result.banned {
                 let mut guard = state.lock().await;
                 guard.insert((chat_id, user_id), pending);
                 return;
@@ -424,14 +505,22 @@ fn spawn_captcha_lifecycle(
                 &pending.user_display,
                 "-> 🏌🏻‍♂️captcha timeout, user banned",
             );
-            send_captcha_log_if_enabled(
+            log_captcha_failure_and_attach(
                 &bot,
                 &config,
-                &user,
-                chat_id,
-                pending.chat_title.as_deref(),
-                pending.chat_username.as_deref(),
-                false,
+                CaptchaFailureLog {
+                    context: CaptchaLogContext {
+                        user: &user,
+                        chat_id,
+                        chat_title: pending.chat_title.as_deref(),
+                        chat_username: pending.chat_username.as_deref(),
+                    },
+                    reason: CaptchaFailureReason::Timeout,
+                    attempts_used: pending.attempts_total.saturating_sub(pending.attempts_left),
+                    attempts_total: pending.attempts_total,
+                    ban_release_at: ban_result.release_at,
+                    store: Some(store.as_ref()),
+                },
             )
             .await;
         }
@@ -501,7 +590,7 @@ pub async fn restore_pending_captchas(
         }
 
         if pending.expires_at <= now {
-            let banned = ban_user_and_maybe_release(
+            let ban_result = ban_user_and_maybe_release(
                 bot,
                 config,
                 BanRequest::from_pending(
@@ -513,7 +602,7 @@ pub async fn restore_pending_captchas(
                 ),
             )
             .await;
-            if !banned {
+            if !ban_result.banned {
                 continue;
             }
             store
@@ -522,14 +611,22 @@ pub async fn restore_pending_captchas(
             let _ = bot
                 .delete_message(chat_id, pending.captcha_message_id)
                 .await;
-            send_captcha_log_if_enabled(
+            log_captcha_failure_and_attach(
                 bot,
                 config,
-                &user,
-                chat_id,
-                pending.chat_title.as_deref(),
-                pending.chat_username.as_deref(),
-                false,
+                CaptchaFailureLog {
+                    context: CaptchaLogContext {
+                        user: &user,
+                        chat_id,
+                        chat_title: pending.chat_title.as_deref(),
+                        chat_username: pending.chat_username.as_deref(),
+                    },
+                    reason: CaptchaFailureReason::Timeout,
+                    attempts_used: pending.attempts_total.saturating_sub(pending.attempts_left),
+                    attempts_total: pending.attempts_total,
+                    ban_release_at: ban_result.release_at,
+                    store: Some(&store),
+                },
             )
             .await;
             continue;
@@ -804,7 +901,7 @@ pub async fn on_callback_query(
                         guard.remove(&key)
                     };
                     if let Some(pending) = pending {
-                        let banned = ban_user_and_maybe_release(
+                        let ban_result = ban_user_and_maybe_release(
                             &bot,
                             &config,
                             BanRequest::from_pending(
@@ -816,7 +913,7 @@ pub async fn on_callback_query(
                             ),
                         )
                         .await;
-                        if !banned {
+                        if !ban_result.banned {
                             let mut guard = state.lock().await;
                             guard.insert(key, pending);
                             let _ = bot
@@ -860,14 +957,22 @@ pub async fn on_callback_query(
                             &pending.user_display,
                             "-> 🧨 captcha attempts exceeded, user banned",
                         );
-                        send_captcha_log_if_enabled(
+                        log_captcha_failure_and_attach(
                             &bot,
                             &config,
-                            &from,
-                            chat_id,
-                            pending.chat_title.as_deref(),
-                            pending.chat_username.as_deref(),
-                            false,
+                            CaptchaFailureLog {
+                                context: CaptchaLogContext {
+                                    user: &from,
+                                    chat_id,
+                                    chat_title: pending.chat_title.as_deref(),
+                                    chat_username: pending.chat_username.as_deref(),
+                                },
+                                reason: CaptchaFailureReason::AttemptsExceeded,
+                                attempts_used: pending.attempts_total,
+                                attempts_total: pending.attempts_total,
+                                ban_release_at: ban_result.release_at,
+                                store: ban_release_store.as_deref(),
+                            },
                         )
                         .await;
                     }
@@ -1109,11 +1214,20 @@ pub async fn on_callback_query(
             send_captcha_log_if_enabled(
                 &bot,
                 &config,
-                &from,
-                chat_id,
-                chat_title.as_deref(),
-                chat_username.as_deref(),
-                true,
+                CaptchaLogContext {
+                    user: &from,
+                    chat_id,
+                    chat_title: chat_title.as_deref(),
+                    chat_username: chat_username.as_deref(),
+                },
+                CaptchaLogOutcome::Success {
+                    attempts_used: pending
+                        .attempts_total
+                        .saturating_sub(pending.attempts_left)
+                        .saturating_add(1)
+                        .min(pending.attempts_total),
+                    attempts_total: pending.attempts_total,
+                },
             )
             .await;
         }
@@ -1144,7 +1258,11 @@ async fn restore_chat_permissions(
     Ok(())
 }
 
-async fn ban_user_and_maybe_release(bot: &Bot, config: &Arc<Config>, request: BanRequest) -> bool {
+async fn ban_user_and_maybe_release(
+    bot: &Bot,
+    config: &Arc<Config>,
+    request: BanRequest,
+) -> BanResult {
     let BanRequest {
         chat_id,
         user_id,
@@ -1157,7 +1275,6 @@ async fn ban_user_and_maybe_release(bot: &Bot, config: &Arc<Config>, request: Ba
     } = request;
 
     let release_time = Utc::now() + ChronoDuration::seconds(config.ban_release_after_secs as i64);
-    let release_at = release_time.timestamp();
     let mut ban_request = bot.ban_chat_member(chat_id, user_id);
     if config.ban_release_enabled {
         ban_request = ban_request.until_date(release_time);
@@ -1172,11 +1289,17 @@ async fn ban_user_and_maybe_release(bot: &Bot, config: &Arc<Config>, request: Ba
             error_context,
             &err,
         );
-        return false;
+        return BanResult::default();
     }
 
+    let release_at = config
+        .ban_release_enabled
+        .then_some(release_time.timestamp());
     if !config.ban_release_enabled {
-        return true;
+        return BanResult {
+            banned: true,
+            release_at,
+        };
     }
     let Some(store) = ban_release_store else {
         log_telegram_error(
@@ -1188,7 +1311,10 @@ async fn ban_user_and_maybe_release(bot: &Bot, config: &Arc<Config>, request: Ba
             "ban release store unavailable after user ban",
             &"state store unavailable",
         );
-        return true;
+        return BanResult {
+            banned: true,
+            release_at,
+        };
     };
     let Ok(user_id_i64) = i64::try_from(user_id.0) else {
         let err = "user id out of range";
@@ -1201,17 +1327,29 @@ async fn ban_user_and_maybe_release(bot: &Bot, config: &Arc<Config>, request: Ba
             "failed to store ban release job (user id out of range)",
             &err,
         );
-        return true;
+        return BanResult {
+            banned: true,
+            release_at,
+        };
     };
     if let Err(err) = store
         .upsert_job(BanReleaseJob {
             chat_id: chat_id.0,
             user_id: user_id_i64,
-            release_at,
+            release_at: release_time.timestamp(),
             user_name,
             user_username,
             chat_title: chat_title.clone(),
             chat_username: chat_username.clone(),
+            log_chat_id: config
+                .captcha_log_enabled
+                .then_some(config.captcha_log_chat_id)
+                .flatten(),
+            log_message_thread_id: config
+                .captcha_log_enabled
+                .then_some(config.captcha_log_message_thread_id)
+                .flatten(),
+            log_message_id: None,
         })
         .await
     {
@@ -1225,7 +1363,10 @@ async fn ban_user_and_maybe_release(bot: &Bot, config: &Arc<Config>, request: Ba
             &err,
         );
     }
-    true
+    BanResult {
+        banned: true,
+        release_at,
+    }
 }
 
 fn is_command(input: &str, cmd: &str) -> bool {
@@ -1309,25 +1450,84 @@ fn build_captcha_keyboard(options: &[String], digits_to_emoji: bool) -> InlineKe
     InlineKeyboardMarkup::new(rows)
 }
 
+async fn log_captcha_failure_and_attach(
+    bot: &Bot,
+    config: &Config,
+    failure: CaptchaFailureLog<'_>,
+) {
+    let CaptchaFailureLog {
+        context,
+        reason,
+        attempts_used,
+        attempts_total,
+        ban_release_at,
+        store,
+    } = failure;
+    let reference = send_captcha_log_if_enabled(
+        bot,
+        config,
+        context,
+        CaptchaLogOutcome::Failure {
+            reason,
+            attempts_used,
+            attempts_total,
+            ban_release_at,
+        },
+    )
+    .await;
+
+    if ban_release_at.is_none() {
+        return;
+    }
+    let Some(reference) = reference else {
+        return;
+    };
+    let Some(store) = store else {
+        return;
+    };
+    let Ok(user_id) = i64::try_from(context.user.id.0) else {
+        log_system_level(
+            config,
+            LogLevel::Warn,
+            "failed to attach captcha log: user id out of range",
+        );
+        return;
+    };
+    if let Err(err) = store
+        .attach_log_message(
+            context.chat_id.0,
+            user_id,
+            reference.chat_id,
+            reference.message_thread_id,
+            reference.message_id,
+        )
+        .await
+    {
+        log_system_level(
+            config,
+            LogLevel::Warn,
+            &format!("failed to attach captcha log message to ban release job: {err}"),
+        );
+    }
+}
+
 async fn send_captcha_log_if_enabled(
     bot: &Bot,
     config: &Config,
-    user: &teloxide::types::User,
-    chat_id: ChatId,
-    chat_title: Option<&str>,
-    chat_username: Option<&str>,
-    success: bool,
-) {
+    context: CaptchaLogContext<'_>,
+    outcome: CaptchaLogOutcome,
+) -> Option<CaptchaLogReference> {
     if !config.captcha_log_enabled {
-        return;
+        return None;
     }
-    let Some(target_id) = config.captcha_log_chat_id else {
-        return;
-    };
+    let target_id = config.captcha_log_chat_id?;
 
-    let tz_now = Utc::now().with_timezone(&config.timezone);
-    let ts = tz_now.format("%Y-%m-%d %H:%M:%S").to_string();
+    let ts = format_log_timestamp(config, Utc::now().timestamp());
 
+    let user = context.user;
+    let chat_id = context.chat_id;
+    let chat_title = context.chat_title;
+    let chat_username = context.chat_username;
     let first_name = sanitize_log_text(user.first_name.trim());
     let last_name = sanitize_log_text(user.last_name.as_deref().unwrap_or("").trim());
     let full_name = if last_name.is_empty() {
@@ -1350,17 +1550,52 @@ async fn send_captcha_log_if_enabled(
     };
     let group_label = escape_html(&sanitize_log_text(&group_label));
 
-    let result = if success { "✅ sukses" } else { "🚫 gagal" };
-
-    let mut lines = Vec::with_capacity(6);
-    lines.push("🪵 Captcha Log".to_string());
-    lines.push(format!(" ├⏱️ <code>{}</code>", escape_html(&ts)));
+    let mut lines = Vec::with_capacity(12);
+    let (heading, attempts_used, attempts_total) = match outcome {
+        CaptchaLogOutcome::Success {
+            attempts_used,
+            attempts_total,
+        } => ("🔐 CAPTCHA — BERHASIL", attempts_used, attempts_total),
+        CaptchaLogOutcome::Failure {
+            attempts_used,
+            attempts_total,
+            ..
+        } => ("🔐 CAPTCHA — GAGAL", attempts_used, attempts_total),
+    };
+    lines.push(heading.to_string());
+    lines.push(format!(" ├🕒 kejadian: <code>{}</code>", escape_html(&ts)));
     lines.push(format!(" ├🙋🏽 {}", full_name));
     if let Some(line) = username_line {
         lines.push(line);
     }
     lines.push(format!(" ├👥 {}", group_label));
-    lines.push(format!(" └{}", result));
+    lines.push(format!(" ├🆔 user: <code>{}</code>", user.id.0));
+    lines.push(format!(" ├🆔 chat: <code>{}</code>", chat_id.0));
+    lines.push(format!(
+        " ├🎯 percobaan: <code>{}</code>/<code>{}</code>",
+        attempts_used, attempts_total
+    ));
+    match outcome {
+        CaptchaLogOutcome::Success { .. } => {
+            lines.push(" └✅ user terverifikasi.".to_string());
+        }
+        CaptchaLogOutcome::Failure {
+            reason,
+            ban_release_at,
+            ..
+        } => {
+            lines.push(format!(" ├⚠️ alasan: {}", reason.as_str()));
+            if let Some(release_at) = ban_release_at {
+                lines.push(" ├🔒 tindakan: ban sementara.".to_string());
+                lines.push(format!(
+                    " └📅 unban otomatis: <code>{}</code>",
+                    escape_html(&format_log_timestamp(config, release_at))
+                ));
+            } else {
+                lines.push(" └🔒 tindakan: ban diterapkan.".to_string());
+            }
+        }
+    }
     let message = lines.join("\n");
 
     let mut request = bot
@@ -1370,15 +1605,30 @@ async fn send_captcha_log_if_enabled(
     if let Some(thread_id) = config.captcha_log_message_thread_id {
         request = request.message_thread_id(thread_id);
     }
-    if let Err(err) = request.await {
-        log_telegram_error(
-            config,
-            LogLevel::Warn,
-            chat_id,
-            chat_title,
-            chat_username,
-            "failed to send captcha log",
-            &err,
-        );
+    match request.await {
+        Ok(message) => Some(CaptchaLogReference {
+            chat_id: target_id,
+            message_thread_id: config.captcha_log_message_thread_id,
+            message_id: message.id.0,
+        }),
+        Err(err) => {
+            log_telegram_error(
+                config,
+                LogLevel::Warn,
+                chat_id,
+                chat_title,
+                chat_username,
+                "failed to send captcha log",
+                &err,
+            );
+            None
+        }
+    }
+}
+
+fn format_log_timestamp(config: &Config, timestamp: i64) -> String {
+    match config.timezone.timestamp_opt(timestamp, 0) {
+        chrono::LocalResult::Single(value) => value.format("%Y-%m-%d %H:%M:%S %Z").to_string(),
+        _ => format!("invalid timestamp ({timestamp})"),
     }
 }

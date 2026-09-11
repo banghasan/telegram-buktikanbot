@@ -6,4 +6,4 @@
 
 [SUGGESTION] Pengujian Telegram live — unit test sudah mencakup schema, migrasi, round-trip state CAPTCHA, job release, validasi expiry, dan message ID, tetapi belum menguji request Telegram sungguhan — lakukan smoke test pada grup staging setelah deploy.
 
-[SUGGESTION] `docker-compose.yml` dan `docker-compose.webhook.yml` — tag image kini dipin ke versi `1.9.0` dengan override `BOT_IMAGE`, sehingga upgrade tetap memerlukan perubahan tag secara eksplisit — ubah `BOT_IMAGE` saat merilis versi baru.
+[SUGGESTION] `docker-compose.yml` dan `docker-compose.webhook.yml` — tag image kini dipin ke versi `1.9.3` dengan override `BOT_IMAGE`, sehingga upgrade tetap memerlukan perubahan tag secara eksplisit — ubah `BOT_IMAGE` saat merilis versi baru.

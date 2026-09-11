@@ -116,6 +116,15 @@ Keterangan variabel:
 - `TIMEZONE`: zona waktu log, default `Asia/Jakarta`.
 - `RUN_MODE`: `polling` (default) atau `webhook`.
 
+Log CAPTCHA mencatat status, waktu kejadian, identitas user dan chat, ID Telegram,
+jumlah percobaan, alasan kegagalan, serta tindakan ban. Jika ban sementara
+berhasil dijadwalkan, waktu unban otomatis juga dicatat. Log pelepasan ban dikirim
+sebagai reply pada log kegagalan yang terkait. Jika pesan parent tidak tersedia
+atau merupakan data lama, bot mengirim log pelepasan sebagai pesan biasa.
+
+Toolchain Rust dikunci pada versi `1.98.1` melalui `rust-toolchain.toml` agar
+build lokal, CI, dan release menggunakan versi yang konsisten.
+
 Jika ingin menjalankan mode webhook, lihat panduan lengkap di [`WEBHOOK.md`](./WEBHOOK.md).
 
 Catatan Docker: jika memakai image Docker, contoh env bisa ditemukan di
@@ -193,7 +202,7 @@ docker compose up -d
 Contoh upgrade image:
 
 ```bash
-BOT_IMAGE=ghcr.io/banghasan/telegram-buktikanbot:1.9.0 docker compose up -d
+BOT_IMAGE=ghcr.io/banghasan/telegram-buktikanbot:1.9.3 docker compose up -d
 ```
 
 Override nilai `.env` saat menjalankan:

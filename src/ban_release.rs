@@ -29,14 +29,18 @@ impl BanReleaseStore {
             let conn = open_db(&path)?;
             conn.execute(
                 "INSERT INTO ban_release_jobs
-                 (chat_id, user_id, release_at, user_name, user_username, chat_title, chat_username)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 (chat_id, user_id, release_at, user_name, user_username, chat_title, chat_username,
+                  log_chat_id, log_message_thread_id, log_message_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
                  ON CONFLICT(chat_id, user_id) DO UPDATE SET
                     release_at=excluded.release_at,
                     user_name=excluded.user_name,
                     user_username=excluded.user_username,
                     chat_title=excluded.chat_title,
-                    chat_username=excluded.chat_username",
+                    chat_username=excluded.chat_username,
+                    log_chat_id=excluded.log_chat_id,
+                    log_message_thread_id=excluded.log_message_thread_id,
+                    log_message_id=excluded.log_message_id",
                 params![
                     job.chat_id,
                     job.user_id,
@@ -44,7 +48,41 @@ impl BanReleaseStore {
                     job.user_name,
                     job.user_username,
                     job.chat_title,
-                    job.chat_username
+                    job.chat_username,
+                    job.log_chat_id,
+                    job.log_message_thread_id,
+                    job.log_message_id,
+                ],
+            )?;
+            Ok::<_, rusqlite::Error>(())
+        })
+        .await?
+        .map_err(|err| err.into())
+    }
+
+    pub async fn attach_log_message(
+        &self,
+        chat_id: i64,
+        user_id: i64,
+        log_chat_id: i64,
+        log_message_thread_id: Option<i32>,
+        log_message_id: i32,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let path = self.db_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = open_db(&path)?;
+            conn.execute(
+                "UPDATE ban_release_jobs
+                 SET log_chat_id = ?1,
+                     log_message_thread_id = ?2,
+                     log_message_id = ?3
+                 WHERE chat_id = ?4 AND user_id = ?5",
+                params![
+                    log_chat_id,
+                    log_message_thread_id,
+                    log_message_id,
+                    chat_id,
+                    user_id,
                 ],
             )?;
             Ok::<_, rusqlite::Error>(())
@@ -171,7 +209,8 @@ impl BanReleaseStore {
         tokio::task::spawn_blocking(move || {
             let conn = open_db(&path)?;
             let mut stmt = conn.prepare(
-                "SELECT chat_id, user_id, release_at, user_name, user_username, chat_title, chat_username
+                "SELECT chat_id, user_id, release_at, user_name, user_username, chat_title, chat_username,
+                        log_chat_id, log_message_thread_id, log_message_id
                  FROM ban_release_jobs
                  WHERE release_at <= ?1
                  ORDER BY release_at ASC
@@ -186,6 +225,9 @@ impl BanReleaseStore {
                     user_username: row.get(4)?,
                     chat_title: row.get(5)?,
                     chat_username: row.get(6)?,
+                    log_chat_id: row.get(7)?,
+                    log_message_thread_id: row.get(8)?,
+                    log_message_id: row.get(9)?,
                 })
             })?;
             let mut out = Vec::new();
@@ -228,6 +270,9 @@ fn init_db(path: &str) -> Result<(), rusqlite::Error> {
             user_username TEXT,
             chat_title TEXT,
             chat_username TEXT,
+            log_chat_id INTEGER,
+            log_message_thread_id INTEGER,
+            log_message_id INTEGER,
             PRIMARY KEY (chat_id, user_id)
         );
         CREATE INDEX IF NOT EXISTS idx_ban_release_jobs_release_at
@@ -237,6 +282,9 @@ fn init_db(path: &str) -> Result<(), rusqlite::Error> {
     ensure_column(&conn, "user_username", "TEXT")?;
     ensure_column(&conn, "chat_title", "TEXT")?;
     ensure_column(&conn, "chat_username", "TEXT")?;
+    ensure_column(&conn, "log_chat_id", "INTEGER")?;
+    ensure_column(&conn, "log_message_thread_id", "INTEGER")?;
+    ensure_column(&conn, "log_message_id", "INTEGER")?;
     conn.execute_batch(
         "UPDATE ban_release_jobs
          SET user_name = COALESCE(user_name, '-')
@@ -306,6 +354,9 @@ pub struct BanReleaseJob {
     pub user_username: Option<String>,
     pub chat_title: Option<String>,
     pub chat_username: Option<String>,
+    pub log_chat_id: Option<i64>,
+    pub log_message_thread_id: Option<i32>,
+    pub log_message_id: Option<i32>,
 }
 
 #[cfg(test)]
@@ -350,6 +401,9 @@ mod tests {
             user_username: Some("user".to_string()),
             chat_title: Some("Group".to_string()),
             chat_username: Some("group".to_string()),
+            log_chat_id: Some(-200),
+            log_message_thread_id: Some(42),
+            log_message_id: Some(7),
         };
 
         store.upsert_job(job.clone()).await.unwrap();
@@ -357,6 +411,35 @@ mod tests {
         assert_eq!(store.fetch_due(100).await.unwrap(), vec![job.clone()]);
         store.delete_job(job.chat_id, job.user_id).await.unwrap();
         assert!(store.fetch_due(100).await.unwrap().is_empty());
+        remove_database(&path);
+    }
+
+    #[tokio::test]
+    async fn log_message_reference_can_be_attached_to_job() {
+        let path = temporary_db_path("log-reference");
+        let store = BanReleaseStore::init(path.clone()).await.unwrap();
+        let job = BanReleaseJob {
+            chat_id: -100,
+            user_id: 42,
+            release_at: 100,
+            user_name: "User".to_string(),
+            user_username: None,
+            chat_title: None,
+            chat_username: None,
+            log_chat_id: Some(-200),
+            log_message_thread_id: Some(42),
+            log_message_id: None,
+        };
+
+        store.upsert_job(job).await.unwrap();
+        store
+            .attach_log_message(-100, 42, -200, Some(42), 7)
+            .await
+            .unwrap();
+        let due = store.fetch_due(100).await.unwrap();
+        assert_eq!(due[0].log_chat_id, Some(-200));
+        assert_eq!(due[0].log_message_thread_id, Some(42));
+        assert_eq!(due[0].log_message_id, Some(7));
         remove_database(&path);
     }
 
@@ -417,6 +500,9 @@ mod tests {
             user_username: None,
             chat_title: None,
             chat_username: None,
+            log_chat_id: None,
+            log_message_thread_id: None,
+            log_message_id: None,
         };
         store.upsert_job(job.clone()).await.unwrap();
         assert_eq!(store.fetch_due(100).await.unwrap(), vec![job]);

@@ -1,7 +1,8 @@
 ## Build from Source (Alternative)
 
 ### Prerequisites
-- Rust (edition 2024) and Cargo.
+- Rust 1.98.1 and Cargo. The repository includes `rust-toolchain.toml`, so
+  `rustup` selects the same toolchain automatically.
 
 ### Build and Run
 

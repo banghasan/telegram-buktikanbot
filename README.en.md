@@ -102,6 +102,15 @@ Environment variables:
 - `TIMEZONE`: log timezone (default `Asia/Jakarta`).
 - `RUN_MODE`: `polling` (default) or `webhook`.
 
+Captcha logs include the status, event time, user and chat identity, Telegram IDs,
+attempt count, failure reason, and ban action. When a temporary ban is scheduled,
+the automatic release time is included as well. A ban-release log replies to its
+related failure log. If the parent message is unavailable or belongs to an older
+record, the bot sends the release log as a regular message.
+
+The Rust toolchain is pinned to `1.98.1` through `rust-toolchain.toml` so local
+builds, CI, and releases use the same version.
+
 For webhook mode, see [`WEBHOOK.md`](./WEBHOOK.md).
 
 Docker note: if you use the Docker image, the sample env file is located at
@@ -179,7 +188,7 @@ docker compose up -d
 Example image upgrade:
 
 ```bash
-BOT_IMAGE=ghcr.io/banghasan/telegram-buktikanbot:1.9.0 docker compose up -d
+BOT_IMAGE=ghcr.io/banghasan/telegram-buktikanbot:1.9.3 docker compose up -d
 ```
 
 Override `.env` values at runtime:

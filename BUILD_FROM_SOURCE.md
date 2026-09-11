@@ -1,7 +1,8 @@
 ## Build dari Source (Alternatif)
 
 ### Pra Syarat
-- Rust (edisi 2024) dan Cargo.
+- Rust 1.98.1 dan Cargo. Repository menyediakan `rust-toolchain.toml`, sehingga
+  `rustup` akan memilih toolchain yang sama secara otomatis.
 
 ### Build dan Run
 
