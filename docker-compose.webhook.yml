@@ -1,6 +1,6 @@
 services:
   telegram-buktikanbot:
-    image: ghcr.io/banghasan/telegram-buktikanbot:latest
+    image: ${BOT_IMAGE:-ghcr.io/banghasan/telegram-buktikanbot:1.9.0}
     container_name: telegram-buktikanbot
     restart: unless-stopped
     environment:
@@ -18,10 +18,11 @@ services:
       CAPTCHA_HEIGHT: ${CAPTCHA_HEIGHT:-100}
       CAPTCHA_OPTION_COUNT: ${CAPTCHA_OPTION_COUNT:-6}
       CAPTCHA_ATTEMPTS: ${CAPTCHA_ATTEMPTS:-3}
+      CAPTCHA_OPTION_DIGITS_TO_EMOJI: ${CAPTCHA_OPTION_DIGITS_TO_EMOJI:-true}
       DELETE_JOIN_MESSAGE: ${DELETE_JOIN_MESSAGE:-true}
       DELETE_LEFT_MESSAGE: ${DELETE_LEFT_MESSAGE:-true}
       BAN_RELEASE_ENABLED: ${BAN_RELEASE_ENABLED:-false}
-      BAN_RELEASE_AFTER_SECONDS: ${BAN_RELEASE_AFTER_SECONDS:-21600}
+      BAN_RELEASE_AFTER_SECONDS: ${BAN_RELEASE_AFTER_SECONDS:-14400}
       BAN_RELEASE_DB_PATH: ${BAN_RELEASE_DB_PATH:-/data/buktikan.sqlite}
       LOG_ENABLED: ${LOG_ENABLED:-true}
       LOG_JSON: ${LOG_JSON:-false}

@@ -18,7 +18,8 @@ use crate::ban_release::{BanReleaseJob, BanReleaseStore, worker_interval};
 use crate::captcha::SharedState;
 use crate::config::{Config, LogLevel, RunMode};
 use crate::handlers::{
-    on_callback_query, on_chat_member_updated, on_left_member, on_new_members, on_non_text, on_text,
+    on_callback_query, on_chat_member_updated, on_left_member, on_new_members, on_non_text,
+    on_text, restore_pending_captchas,
 };
 use crate::logging::{log_system, log_system_block, log_system_level};
 use crate::utils::{escape_html, sanitize_log_text};
@@ -87,23 +88,31 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     }
 
     let state: SharedState = Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
-    let ban_release_store = if config.ban_release_enabled {
-        match BanReleaseStore::init(config.ban_release_db_path.clone()).await {
-            Ok(store) => Some(Arc::new(store)),
-            Err(err) => {
-                log_system_level(
-                    &config,
-                    LogLevel::Error,
-                    &format!("ban release store init failed: {err}"),
-                );
-                None
-            }
+    let state_store = match BanReleaseStore::init(config.ban_release_db_path.clone()).await {
+        Ok(store) => Arc::new(store),
+        Err(err) => {
+            log_system_level(
+                &config,
+                LogLevel::Error,
+                &format!("state store init failed: {err}"),
+            );
+            return Err(format!("state store init failed: {err}").into());
         }
-    } else {
-        None
     };
+    log_system_level(
+        &config,
+        LogLevel::Info,
+        &format!(
+            "state store initialized path={}",
+            config.ban_release_db_path
+        ),
+    );
+    restore_pending_captchas(&bot, &state, &config, state_store.clone()).await?;
+    let ban_release_store = Some(state_store);
 
-    if let Some(store) = ban_release_store.clone() {
+    if config.ban_release_enabled
+        && let Some(store) = ban_release_store.clone()
+    {
         let bot = bot.clone();
         let config = config.clone();
         tokio::spawn(async move {

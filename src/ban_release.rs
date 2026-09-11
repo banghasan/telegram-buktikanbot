@@ -1,7 +1,12 @@
 use std::error::Error;
 use std::time::Duration;
 
+use rusqlite::types::Type;
 use rusqlite::{Connection, params};
+
+use crate::captcha::CaptchaSession;
+
+const RELEASE_BATCH_SIZE: i64 = 100;
 
 #[derive(Clone)]
 pub struct BanReleaseStore {
@@ -48,6 +53,116 @@ impl BanReleaseStore {
         .map_err(|err| err.into())
     }
 
+    pub async fn save_captcha_session(
+        &self,
+        session: CaptchaSession,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let path = self.db_path.clone();
+        let options_json = serde_json::to_string(&session.options)?;
+        tokio::task::spawn_blocking(move || {
+            let conn = open_db(&path)?;
+            conn.execute(
+                "INSERT INTO captcha_sessions
+                 (chat_id, user_id, code, captcha_message_id, options_json, attempts_left,
+                  attempts_total, expires_at, user_first_name, user_last_name, user_username,
+                  chat_title, chat_username)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                 ON CONFLICT(chat_id, user_id) DO UPDATE SET
+                    code=excluded.code,
+                    captcha_message_id=excluded.captcha_message_id,
+                    options_json=excluded.options_json,
+                    attempts_left=excluded.attempts_left,
+                    attempts_total=excluded.attempts_total,
+                    expires_at=excluded.expires_at,
+                    user_first_name=excluded.user_first_name,
+                    user_last_name=excluded.user_last_name,
+                    user_username=excluded.user_username,
+                    chat_title=excluded.chat_title,
+                    chat_username=excluded.chat_username",
+                params![
+                    session.chat_id,
+                    session.user_id,
+                    session.code,
+                    session.captcha_message_id,
+                    options_json,
+                    session.attempts_left,
+                    session.attempts_total,
+                    session.expires_at,
+                    session.user_first_name,
+                    session.user_last_name,
+                    session.user_username,
+                    session.chat_title,
+                    session.chat_username,
+                ],
+            )?;
+            Ok::<_, rusqlite::Error>(())
+        })
+        .await?
+        .map_err(|err| err.into())
+    }
+
+    pub async fn fetch_captcha_sessions(
+        &self,
+    ) -> Result<Vec<CaptchaSession>, Box<dyn Error + Send + Sync>> {
+        let path = self.db_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = open_db(&path)?;
+            let mut stmt = conn.prepare(
+                "SELECT chat_id, user_id, code, captcha_message_id, options_json,
+                        attempts_left, attempts_total, expires_at, user_first_name,
+                        user_last_name, user_username, chat_title, chat_username
+                 FROM captcha_sessions
+                 ORDER BY expires_at ASC",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                let options_json: String = row.get(4)?;
+                let options = serde_json::from_str(&options_json).map_err(|err| {
+                    rusqlite::Error::FromSqlConversionFailure(4, Type::Text, Box::new(err))
+                })?;
+                Ok(CaptchaSession {
+                    chat_id: row.get(0)?,
+                    user_id: row.get(1)?,
+                    code: row.get(2)?,
+                    captcha_message_id: row.get(3)?,
+                    options,
+                    attempts_left: row.get(5)?,
+                    attempts_total: row.get(6)?,
+                    expires_at: row.get(7)?,
+                    user_first_name: row.get(8)?,
+                    user_last_name: row.get(9)?,
+                    user_username: row.get(10)?,
+                    chat_title: row.get(11)?,
+                    chat_username: row.get(12)?,
+                })
+            })?;
+            let mut out = Vec::new();
+            for row in rows {
+                out.push(row?);
+            }
+            Ok::<_, rusqlite::Error>(out)
+        })
+        .await?
+        .map_err(|err| err.into())
+    }
+
+    pub async fn delete_captcha_session(
+        &self,
+        chat_id: i64,
+        user_id: i64,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let path = self.db_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = open_db(&path)?;
+            conn.execute(
+                "DELETE FROM captcha_sessions WHERE chat_id = ?1 AND user_id = ?2",
+                params![chat_id, user_id],
+            )?;
+            Ok::<_, rusqlite::Error>(())
+        })
+        .await?
+        .map_err(|err| err.into())
+    }
+
     pub async fn fetch_due(
         &self,
         now_ts: i64,
@@ -59,9 +174,10 @@ impl BanReleaseStore {
                 "SELECT chat_id, user_id, release_at, user_name, user_username, chat_title, chat_username
                  FROM ban_release_jobs
                  WHERE release_at <= ?1
-                 ORDER BY release_at ASC",
+                 ORDER BY release_at ASC
+                 LIMIT ?2",
             )?;
-            let rows = stmt.query_map([now_ts], |row| {
+            let rows = stmt.query_map(params![now_ts, RELEASE_BATCH_SIZE], |row| {
                 Ok(BanReleaseJob {
                     chat_id: row.get(0)?,
                     user_id: row.get(1)?,
@@ -117,17 +233,54 @@ fn init_db(path: &str) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_ban_release_jobs_release_at
             ON ban_release_jobs (release_at);",
     )?;
-    conn.execute_batch(
-        "ALTER TABLE ban_release_jobs ADD COLUMN user_name TEXT;
-         ALTER TABLE ban_release_jobs ADD COLUMN user_username TEXT;
-         ALTER TABLE ban_release_jobs ADD COLUMN chat_title TEXT;
-         ALTER TABLE ban_release_jobs ADD COLUMN chat_username TEXT;",
-    )
-    .ok();
+    ensure_column(&conn, "user_name", "TEXT")?;
+    ensure_column(&conn, "user_username", "TEXT")?;
+    ensure_column(&conn, "chat_title", "TEXT")?;
+    ensure_column(&conn, "chat_username", "TEXT")?;
     conn.execute_batch(
         "UPDATE ban_release_jobs
          SET user_name = COALESCE(user_name, '-')
          WHERE user_name IS NULL;",
+    )?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS captcha_sessions (
+            chat_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            code TEXT NOT NULL,
+            captcha_message_id INTEGER NOT NULL,
+            options_json TEXT NOT NULL,
+            attempts_left INTEGER NOT NULL,
+            attempts_total INTEGER NOT NULL,
+            expires_at INTEGER NOT NULL,
+            user_first_name TEXT NOT NULL,
+            user_last_name TEXT,
+            user_username TEXT,
+            chat_title TEXT,
+            chat_username TEXT,
+            PRIMARY KEY (chat_id, user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_captcha_sessions_expires_at
+            ON captcha_sessions (expires_at);",
+    )?;
+    Ok(())
+}
+
+fn ensure_column(
+    conn: &Connection,
+    column_name: &str,
+    column_definition: &str,
+) -> Result<(), rusqlite::Error> {
+    let mut stmt = conn.prepare("PRAGMA table_info(ban_release_jobs)")?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let existing_name: String = row.get(1)?;
+        if existing_name == column_name {
+            return Ok(());
+        }
+    }
+    conn.execute(
+        &format!("ALTER TABLE ban_release_jobs ADD COLUMN {column_name} {column_definition}"),
+        [],
     )?;
     Ok(())
 }
@@ -144,7 +297,7 @@ pub fn worker_interval() -> Duration {
     Duration::from_secs(60)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BanReleaseJob {
     pub chat_id: i64,
     pub user_id: i64,
@@ -153,4 +306,120 @@ pub struct BanReleaseJob {
     pub user_username: Option<String>,
     pub chat_title: Option<String>,
     pub chat_username: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
+
+    fn temporary_db_path(label: &str) -> String {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before Unix epoch")
+            .as_nanos();
+        std::env::temp_dir()
+            .join(format!(
+                "telegram-buktikanbot-{label}-{}-{suffix}-{}",
+                std::process::id(),
+                NEXT_ID.fetch_add(1, Ordering::Relaxed)
+            ))
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    fn remove_database(path: &str) {
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_file(format!("{path}-wal"));
+        let _ = fs::remove_file(format!("{path}-shm"));
+    }
+
+    #[tokio::test]
+    async fn ban_release_job_round_trip_and_delete() {
+        let path = temporary_db_path("job");
+        let store = BanReleaseStore::init(path.clone()).await.unwrap();
+        let job = BanReleaseJob {
+            chat_id: -100,
+            user_id: 42,
+            release_at: 100,
+            user_name: "User".to_string(),
+            user_username: Some("user".to_string()),
+            chat_title: Some("Group".to_string()),
+            chat_username: Some("group".to_string()),
+        };
+
+        store.upsert_job(job.clone()).await.unwrap();
+        assert_eq!(store.fetch_due(99).await.unwrap(), Vec::new());
+        assert_eq!(store.fetch_due(100).await.unwrap(), vec![job.clone()]);
+        store.delete_job(job.chat_id, job.user_id).await.unwrap();
+        assert!(store.fetch_due(100).await.unwrap().is_empty());
+        remove_database(&path);
+    }
+
+    #[tokio::test]
+    async fn captcha_session_round_trip_and_delete() {
+        let path = temporary_db_path("captcha");
+        let store = BanReleaseStore::init(path.clone()).await.unwrap();
+        let session = CaptchaSession {
+            chat_id: -100,
+            user_id: 42,
+            code: "ABC123".to_string(),
+            captcha_message_id: 7,
+            options: vec!["ABC123".to_string(), "ZZZ999".to_string()],
+            attempts_left: 2,
+            attempts_total: 3,
+            expires_at: 200,
+            user_first_name: "User".to_string(),
+            user_last_name: Some("Example".to_string()),
+            user_username: Some("user".to_string()),
+            chat_title: Some("Group".to_string()),
+            chat_username: Some("group".to_string()),
+        };
+
+        store.save_captcha_session(session.clone()).await.unwrap();
+        assert_eq!(
+            store.fetch_captcha_sessions().await.unwrap(),
+            vec![session.clone()]
+        );
+        store
+            .delete_captcha_session(session.chat_id, session.user_id)
+            .await
+            .unwrap();
+        assert!(store.fetch_captcha_sessions().await.unwrap().is_empty());
+        remove_database(&path);
+    }
+
+    #[tokio::test]
+    async fn legacy_ban_release_schema_is_migrated() {
+        let path = temporary_db_path("migration");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE ban_release_jobs (
+                chat_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                release_at INTEGER NOT NULL,
+                PRIMARY KEY (chat_id, user_id)
+            );",
+        )
+        .unwrap();
+        drop(conn);
+
+        let store = BanReleaseStore::init(path.clone()).await.unwrap();
+        let job = BanReleaseJob {
+            chat_id: -100,
+            user_id: 42,
+            release_at: 100,
+            user_name: "User".to_string(),
+            user_username: None,
+            chat_title: None,
+            chat_username: None,
+        };
+        store.upsert_job(job.clone()).await.unwrap();
+        assert_eq!(store.fetch_due(100).await.unwrap(), vec![job]);
+        remove_database(&path);
+    }
 }

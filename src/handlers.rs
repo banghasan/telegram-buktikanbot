@@ -2,7 +2,7 @@ use std::error::Error;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use chrono::Utc;
+use chrono::{Duration as ChronoDuration, Utc};
 use teloxide::prelude::*;
 use teloxide::types::{
     CallbackQuery, ChatMemberStatus, ChatMemberUpdated, ChatPermissions, InlineKeyboardButton,
@@ -11,8 +11,9 @@ use teloxide::types::{
 
 use crate::ban_release::{BanReleaseJob, BanReleaseStore};
 use crate::captcha::{
-    CaptchaChatContext, CaptchaCheck, PendingCaptcha, SharedState, captcha_caption,
-    check_captcha_answer, generate_captcha, generate_captcha_options, make_pending_captcha,
+    CaptchaChatContext, CaptchaCheck, CaptchaSession, PendingCaptcha, SharedState, captcha_caption,
+    check_captcha_answer_for_message_at, generate_captcha, generate_captcha_options,
+    make_pending_captcha,
 };
 use crate::config::{Config, LogLevel};
 use crate::logging::{
@@ -159,6 +160,10 @@ async fn start_captcha_for_user(
         }
     }
 
+    let Some(store) = ban_release_store.as_ref() else {
+        return Err("captcha state store unavailable".into());
+    };
+
     let no_permissions = ChatPermissions::empty();
     if let Err(err) = bot
         .restrict_chat_member(chat_id, user.id, no_permissions)
@@ -173,6 +178,22 @@ async fn start_captcha_for_user(
             "failed to restrict user",
             &err,
         );
+        ban_user_and_maybe_release(
+            bot,
+            config,
+            BanRequest {
+                chat_id,
+                user_id: user.id,
+                chat_title: chat.title.clone(),
+                chat_username: chat.username.clone(),
+                user_name: crate::utils::format_user_name(&user),
+                user_username: user.username.clone(),
+                ban_release_store: ban_release_store.clone(),
+                error_context: "failed to restrict user; fallback ban failed",
+            },
+        )
+        .await;
+        return Ok(());
     }
 
     let (code, png) = generate_captcha(
@@ -196,7 +217,7 @@ async fn start_captcha_for_user(
         .reply_markup(keyboard)
         .await?;
 
-    let pending = make_pending_captcha(
+    let mut pending = make_pending_captcha(
         code,
         sent.id,
         options,
@@ -205,6 +226,71 @@ async fn start_captcha_for_user(
         &user,
         &chat,
     );
+    pending.expires_at = Utc::now().timestamp() + config.captcha_timeout_secs as i64;
+
+    let session = match CaptchaSession::from_pending(chat_id, &user, &pending) {
+        Ok(session) => session,
+        Err(err) => {
+            log_system_level(
+                config,
+                LogLevel::Error,
+                &format!("failed to encode captcha session: {err}"),
+            );
+            if let Err(delete_err) = bot.delete_message(chat_id, sent.id).await {
+                log_telegram_error(
+                    config,
+                    LogLevel::Warn,
+                    chat_id,
+                    chat.title.as_deref(),
+                    chat.username.as_deref(),
+                    "failed to delete captcha message after encoding failure",
+                    &delete_err,
+                );
+            }
+            if let Err(restore_err) = restore_chat_permissions(bot, chat_id, user.id).await {
+                log_telegram_error(
+                    config,
+                    LogLevel::Error,
+                    chat_id,
+                    chat.title.as_deref(),
+                    chat.username.as_deref(),
+                    "failed to restore permissions after encoding failure",
+                    &restore_err,
+                );
+            }
+            return Err(err);
+        }
+    };
+    if let Err(err) = store.save_captcha_session(session).await {
+        log_system_level(
+            config,
+            LogLevel::Error,
+            &format!("failed to persist captcha session: {err}"),
+        );
+        if let Err(delete_err) = bot.delete_message(chat_id, sent.id).await {
+            log_telegram_error(
+                config,
+                LogLevel::Warn,
+                chat_id,
+                chat.title.as_deref(),
+                chat.username.as_deref(),
+                "failed to delete captcha message after persistence failure",
+                &delete_err,
+            );
+        }
+        if let Err(restore_err) = restore_chat_permissions(bot, chat_id, user.id).await {
+            log_telegram_error(
+                config,
+                LogLevel::Error,
+                chat_id,
+                chat.title.as_deref(),
+                chat.username.as_deref(),
+                "failed to restore permissions after captcha persistence failure",
+                &restore_err,
+            );
+        }
+        return Err(format!("failed to persist captcha session: {err}").into());
+    }
 
     {
         let mut guard = state.lock().await;
@@ -218,81 +304,109 @@ async fn start_captcha_for_user(
         chat.username.as_deref(),
         "-> ⏳ captcha sent",
     );
+    spawn_captcha_lifecycle(bot, state, config, store.clone(), chat_id, user, sent.id);
 
-    let bot_clone = bot.clone();
-    let state_clone = state.clone();
-    let config_clone = config.clone();
-    let ban_release_store_clone = ban_release_store.clone();
-    let user_clone = user.clone();
+    Ok(())
+}
+
+fn spawn_captcha_lifecycle(
+    bot: &Bot,
+    state: &SharedState,
+    config: &Arc<Config>,
+    store: Arc<BanReleaseStore>,
+    chat_id: ChatId,
+    user: teloxide::types::User,
+    captcha_message_id: teloxide::types::MessageId,
+) {
+    let bot = bot.clone();
+    let state = state.clone();
+    let config = config.clone();
     let user_id = user.id;
-    let timeout = config.captcha_timeout_secs;
     let update_secs = config.captcha_caption_update_secs.max(1);
-    let captcha_message_id = sent.id;
 
     tokio::spawn(async move {
-        let mut remaining = timeout;
-        while remaining > 0 {
-            tokio::time::sleep(Duration::from_secs(update_secs)).await;
-            remaining = remaining.saturating_sub(update_secs);
-
-            let still_pending = {
-                let guard = state_clone.lock().await;
-                guard.contains_key(&(chat_id, user_id))
-            };
-            if !still_pending {
+        loop {
+            let Some(expires_at) = ({
+                let guard = state.lock().await;
+                guard
+                    .get(&(chat_id, user_id))
+                    .map(|pending| pending.expires_at)
+            }) else {
                 return;
+            };
+            let remaining = expires_at.saturating_sub(Utc::now().timestamp()) as u64;
+            if remaining > 0 {
+                tokio::time::sleep(Duration::from_secs(update_secs.min(remaining))).await;
             }
 
             let options_state = {
-                let mut guard = state_clone.lock().await;
-                guard.get_mut(&(chat_id, user_id)).map(|pending| {
-                    pending.remaining_secs = remaining;
-                    (
-                        pending.options.clone(),
-                        pending.attempts_left,
-                        pending.attempts_total,
-                    )
-                })
+                let mut guard = state.lock().await;
+                let Some(pending) = guard.get_mut(&(chat_id, user_id)) else {
+                    return;
+                };
+                let remaining = pending.expires_at.saturating_sub(Utc::now().timestamp()) as u64;
+                pending.remaining_secs = remaining;
+                (
+                    pending.options.clone(),
+                    pending.attempts_left,
+                    pending.attempts_total,
+                    remaining,
+                )
             };
-            if let Some((options, attempts_left, attempts_total)) = options_state {
-                let caption =
-                    captcha_caption(&user_clone, remaining, attempts_left, attempts_total);
-                let _ = bot_clone
-                    .edit_message_caption(chat_id, captcha_message_id)
-                    .caption(caption)
-                    .parse_mode(ParseMode::Html)
-                    .reply_markup(build_captcha_keyboard(
-                        &options,
-                        config_clone.captcha_option_digits_to_emoji,
-                    ))
-                    .await;
+            let (options, attempts_left, attempts_total, remaining) = options_state;
+            let caption = captcha_caption(&user, remaining, attempts_left, attempts_total);
+            let _ = bot
+                .edit_message_caption(chat_id, captcha_message_id)
+                .caption(caption)
+                .parse_mode(ParseMode::Html)
+                .reply_markup(build_captcha_keyboard(
+                    &options,
+                    config.captcha_option_digits_to_emoji,
+                ))
+                .await;
+            if remaining == 0 {
+                break;
             }
         }
 
         let pending = {
-            let mut guard = state_clone.lock().await;
+            let mut guard = state.lock().await;
             guard.remove(&(chat_id, user_id))
         };
 
         if let Some(pending) = pending {
-            ban_user_and_maybe_release(
-                &bot_clone,
-                &config_clone,
+            let banned = ban_user_and_maybe_release(
+                &bot,
+                &config,
                 BanRequest::from_pending(
                     chat_id,
                     user_id,
                     &pending,
-                    ban_release_store_clone.clone(),
+                    Some(store.clone()),
                     "failed to ban user on timeout",
                 ),
             )
             .await;
-            if let Err(err) = bot_clone
+            if !banned {
+                let mut guard = state.lock().await;
+                guard.insert((chat_id, user_id), pending);
+                return;
+            }
+            if let Ok(user_id_i64) = i64::try_from(user_id.0)
+                && let Err(err) = store.delete_captcha_session(chat_id.0, user_id_i64).await
+            {
+                log_system_level(
+                    &config,
+                    LogLevel::Error,
+                    &format!("failed to delete expired captcha session: {err}"),
+                );
+            }
+            if let Err(err) = bot
                 .delete_message(chat_id, pending.captcha_message_id)
                 .await
             {
                 log_telegram_error(
-                    &config_clone,
+                    &config,
                     LogLevel::Error,
                     chat_id,
                     pending.chat_title.as_deref(),
@@ -302,7 +416,7 @@ async fn start_captcha_for_user(
                 );
             }
             log_user_event_by_display(
-                &config_clone,
+                &config,
                 user_id,
                 chat_id,
                 pending.chat_title.as_deref(),
@@ -311,9 +425,9 @@ async fn start_captcha_for_user(
                 "-> 🏌🏻‍♂️captcha timeout, user banned",
             );
             send_captcha_log_if_enabled(
-                &bot_clone,
-                &config_clone,
-                &user_clone,
+                &bot,
+                &config,
+                &user,
                 chat_id,
                 pending.chat_title.as_deref(),
                 pending.chat_username.as_deref(),
@@ -322,7 +436,151 @@ async fn start_captcha_for_user(
             .await;
         }
     });
+}
 
+pub async fn restore_pending_captchas(
+    bot: &Bot,
+    state: &SharedState,
+    config: &Arc<Config>,
+    store: Arc<BanReleaseStore>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let now = Utc::now().timestamp();
+    let sessions = store.fetch_captcha_sessions().await?;
+    log_system_level(
+        config,
+        LogLevel::Info,
+        &format!("loaded {} persisted captcha session(s)", sessions.len()),
+    );
+    let mut restored = 0;
+
+    for session in sessions {
+        let (chat_id, user_id, user, pending) = match session.clone().into_runtime(now) {
+            Ok(runtime) => runtime,
+            Err(err) => {
+                log_system_level(
+                    config,
+                    LogLevel::Error,
+                    &format!(
+                        "discarding invalid persisted captcha session chat={} user={}: {err}",
+                        session.chat_id, session.user_id
+                    ),
+                );
+                store
+                    .delete_captcha_session(session.chat_id, session.user_id)
+                    .await?;
+                continue;
+            }
+        };
+
+        let member = match bot.get_chat_member(chat_id, user_id).await {
+            Ok(member) => member,
+            Err(err) => {
+                log_telegram_error(
+                    config,
+                    LogLevel::Warn,
+                    chat_id,
+                    pending.chat_title.as_deref(),
+                    pending.chat_username.as_deref(),
+                    "failed to inspect persisted captcha member during startup recovery",
+                    &err,
+                );
+                continue;
+            }
+        };
+        match member.status() {
+            ChatMemberStatus::Left
+            | ChatMemberStatus::Banned
+            | ChatMemberStatus::Owner
+            | ChatMemberStatus::Administrator => {
+                store
+                    .delete_captcha_session(session.chat_id, session.user_id)
+                    .await?;
+                continue;
+            }
+            ChatMemberStatus::Member | ChatMemberStatus::Restricted => {}
+        }
+
+        if pending.expires_at <= now {
+            let banned = ban_user_and_maybe_release(
+                bot,
+                config,
+                BanRequest::from_pending(
+                    chat_id,
+                    user_id,
+                    &pending,
+                    Some(store.clone()),
+                    "failed to ban user during captcha recovery",
+                ),
+            )
+            .await;
+            if !banned {
+                continue;
+            }
+            store
+                .delete_captcha_session(session.chat_id, session.user_id)
+                .await?;
+            let _ = bot
+                .delete_message(chat_id, pending.captcha_message_id)
+                .await;
+            send_captcha_log_if_enabled(
+                bot,
+                config,
+                &user,
+                chat_id,
+                pending.chat_title.as_deref(),
+                pending.chat_username.as_deref(),
+                false,
+            )
+            .await;
+            continue;
+        }
+
+        if let Err(err) = bot
+            .delete_message(chat_id, pending.captcha_message_id)
+            .await
+        {
+            log_telegram_error(
+                config,
+                LogLevel::Warn,
+                chat_id,
+                pending.chat_title.as_deref(),
+                pending.chat_username.as_deref(),
+                "failed to delete stale captcha message during startup recovery",
+                &err,
+            );
+        }
+        if let Err(err) = start_captcha_for_user(
+            bot,
+            chat_id,
+            CaptchaChatContext::new(pending.chat_title.clone(), pending.chat_username.clone()),
+            user,
+            state,
+            config,
+            &Some(store.clone()),
+        )
+        .await
+        {
+            log_telegram_error(
+                config,
+                LogLevel::Warn,
+                chat_id,
+                pending.chat_title.as_deref(),
+                pending.chat_username.as_deref(),
+                "failed to reissue captcha during startup recovery",
+                &err,
+            );
+            continue;
+        }
+        restored += 1;
+    }
+
+    if restored > 0 {
+        log_system_level(
+            config,
+            LogLevel::Info,
+            &format!("restored {restored} pending captcha session(s) after startup"),
+        );
+    }
     Ok(())
 }
 
@@ -486,7 +744,13 @@ pub async fn on_callback_query(
 
     let check = {
         let mut guard = state.lock().await;
-        check_captcha_answer(&mut guard, key, selected)
+        check_captcha_answer_for_message_at(
+            &mut guard,
+            key,
+            message.id,
+            Utc::now().timestamp(),
+            selected,
+        )
     };
 
     match check {
@@ -501,6 +765,7 @@ pub async fn on_callback_query(
             let updated = {
                 let mut guard = state.lock().await;
                 guard.get_mut(&key).map(|pending| {
+                    let previous = pending.clone();
                     pending.attempts_left = pending.attempts_left.saturating_sub(1);
                     let mut updated_png = None;
                     let options = if pending.attempts_left == 0 {
@@ -526,26 +791,20 @@ pub async fn on_callback_query(
                             }
                         }
                     };
-                    pending.options = options.clone();
-                    (
-                        options,
-                        updated_png,
-                        pending.attempts_left,
-                        pending.attempts_total,
-                        pending.remaining_secs,
-                    )
+                    pending.options = options;
+                    pending.remaining_secs =
+                        pending.expires_at.saturating_sub(Utc::now().timestamp()) as u64;
+                    (previous, pending.clone(), updated_png)
                 })
             };
-            if let Some((options, updated_png, attempts_left, attempts_total, remaining_secs)) =
-                updated
-            {
-                if attempts_left == 0 {
+            if let Some((previous, pending_state, updated_png)) = updated {
+                if pending_state.attempts_left == 0 {
                     let pending = {
                         let mut guard = state.lock().await;
                         guard.remove(&key)
                     };
                     if let Some(pending) = pending {
-                        ban_user_and_maybe_release(
+                        let banned = ban_user_and_maybe_release(
                             &bot,
                             &config,
                             BanRequest::from_pending(
@@ -557,6 +816,27 @@ pub async fn on_callback_query(
                             ),
                         )
                         .await;
+                        if !banned {
+                            let mut guard = state.lock().await;
+                            guard.insert(key, pending);
+                            let _ = bot
+                                .answer_callback_query(id)
+                                .text("⚠️ Sistem belum bisa mengeluarkanmu. Coba lagi sebentar.")
+                                .show_alert(true)
+                                .await;
+                            return Ok(());
+                        }
+                        if let Some(store) = ban_release_store.as_ref()
+                            && let Ok(user_id_i64) = i64::try_from(from.id.0)
+                            && let Err(err) =
+                                store.delete_captcha_session(chat_id.0, user_id_i64).await
+                        {
+                            log_system_level(
+                                &config,
+                                LogLevel::Error,
+                                &format!("failed to delete captcha session: {err}"),
+                            );
+                        }
                         if let Err(err) = bot
                             .delete_message(chat_id, pending.captcha_message_id)
                             .await
@@ -598,30 +878,103 @@ pub async fn on_callback_query(
                         .await;
                     return Ok(());
                 }
-                let caption = captcha_caption(&from, remaining_secs, attempts_left, attempts_total);
-                if let Some(png) = updated_png {
+                let persistence_result = match ban_release_store.as_ref() {
+                    Some(store) => {
+                        match CaptchaSession::from_pending(chat_id, &from, &pending_state) {
+                            Ok(session) => store.save_captcha_session(session).await,
+                            Err(err) => Err(err),
+                        }
+                    }
+                    None => Err("captcha state store unavailable".into()),
+                };
+                if let Err(err) = persistence_result {
+                    log_system_level(
+                        &config,
+                        LogLevel::Error,
+                        &format!("failed to update captcha session: {err}"),
+                    );
+                    let mut guard = state.lock().await;
+                    guard.insert(key, previous);
+                    let _ = bot
+                        .answer_callback_query(id)
+                        .text("⚠️ Sistem sedang sibuk. Silakan tekan tombol lagi.")
+                        .show_alert(true)
+                        .await;
+                    return Ok(());
+                }
+                let options = &pending_state.options;
+                let caption = captcha_caption(
+                    &from,
+                    pending_state.remaining_secs,
+                    pending_state.attempts_left,
+                    pending_state.attempts_total,
+                );
+                let edit_result = if let Some(png) = updated_png {
                     let media = InputMedia::Photo(
                         InputMediaPhoto::new(InputFile::memory(png))
                             .caption(caption)
                             .parse_mode(ParseMode::Html),
                     );
-                    let _ = bot
-                        .edit_message_media(chat_id, message.id, media)
+                    bot.edit_message_media(chat_id, message.id, media)
                         .reply_markup(build_captcha_keyboard(
-                            &options,
+                            options,
                             config.captcha_option_digits_to_emoji,
                         ))
-                        .await;
+                        .await
                 } else {
-                    let _ = bot
-                        .edit_message_caption(chat_id, message.id)
+                    bot.edit_message_caption(chat_id, message.id)
                         .caption(caption)
                         .parse_mode(ParseMode::Html)
                         .reply_markup(build_captcha_keyboard(
-                            &options,
+                            options,
                             config.captcha_option_digits_to_emoji,
                         ))
+                        .await
+                };
+                if let Err(err) = edit_result {
+                    let (chat_title, chat_username) = chat_context(&message.chat);
+                    log_telegram_error(
+                        &config,
+                        LogLevel::Warn,
+                        chat_id,
+                        chat_title.as_deref(),
+                        chat_username.as_deref(),
+                        "failed to update captcha message",
+                        &err,
+                    );
+                    if let Some(store) = ban_release_store.as_ref() {
+                        match CaptchaSession::from_pending(chat_id, &from, &previous) {
+                            Ok(session) => {
+                                if let Err(rollback_err) = store.save_captcha_session(session).await
+                                {
+                                    log_system_level(
+                                        &config,
+                                        LogLevel::Error,
+                                        &format!(
+                                            "failed to roll back captcha session after message update failure: {rollback_err}"
+                                        ),
+                                    );
+                                }
+                            }
+                            Err(rollback_err) => {
+                                log_system_level(
+                                    &config,
+                                    LogLevel::Error,
+                                    &format!(
+                                        "failed to encode captcha rollback session: {rollback_err}"
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                    let mut guard = state.lock().await;
+                    guard.insert(key, previous);
+                    let _ = bot
+                        .answer_callback_query(id)
+                        .text("⚠️ Captcha belum diperbarui. Silakan tekan tombol lagi.")
+                        .show_alert(true)
                         .await;
+                    return Ok(());
                 }
                 let _ = bot
                     .answer_callback_query(id)
@@ -640,9 +993,6 @@ pub async fn on_callback_query(
             }
         }
         CaptchaCheck::Verified(pending) => {
-            let _ = bot
-                .delete_message(chat_id, pending.captcha_message_id)
-                .await;
             if let Err(err) = restore_chat_permissions(&bot, chat_id, from.id).await {
                 let (chat_title, chat_username) = chat_context(&message.chat);
                 log_telegram_error(
@@ -652,6 +1002,93 @@ pub async fn on_callback_query(
                     chat_title.as_deref(),
                     chat_username.as_deref(),
                     "failed to restore user permissions",
+                    &err,
+                );
+                let mut guard = state.lock().await;
+                guard.insert(key, *pending);
+                let _ = bot
+                    .answer_callback_query(id)
+                    .text("⚠️ Verifikasi belum selesai. Coba lagi sebentar.")
+                    .show_alert(true)
+                    .await;
+                return Ok(());
+            }
+            let Some(store) = ban_release_store.as_ref() else {
+                if let Err(err) = bot
+                    .restrict_chat_member(
+                        chat_id,
+                        from.id,
+                        teloxide::types::ChatPermissions::empty(),
+                    )
+                    .await
+                {
+                    let (chat_title, chat_username) = chat_context(&message.chat);
+                    log_telegram_error(
+                        &config,
+                        LogLevel::Error,
+                        chat_id,
+                        chat_title.as_deref(),
+                        chat_username.as_deref(),
+                        "failed to re-restrict user because captcha state store is unavailable",
+                        &err,
+                    );
+                }
+                let mut guard = state.lock().await;
+                guard.insert(key, *pending);
+                let _ = bot
+                    .answer_callback_query(id)
+                    .text("⚠️ Sistem belum siap. Coba lagi sebentar.")
+                    .show_alert(true)
+                    .await;
+                return Ok(());
+            };
+            let user_id_i64 = i64::try_from(from.id.0).map_err(|_| "user id out of range")?;
+            if let Err(err) = store.delete_captcha_session(chat_id.0, user_id_i64).await {
+                log_system_level(
+                    &config,
+                    LogLevel::Error,
+                    &format!("failed to delete verified captcha session: {err}"),
+                );
+                if let Err(restrict_err) = bot
+                    .restrict_chat_member(
+                        chat_id,
+                        from.id,
+                        teloxide::types::ChatPermissions::empty(),
+                    )
+                    .await
+                {
+                    let (chat_title, chat_username) = chat_context(&message.chat);
+                    log_telegram_error(
+                        &config,
+                        LogLevel::Error,
+                        chat_id,
+                        chat_title.as_deref(),
+                        chat_username.as_deref(),
+                        "failed to re-restrict user after captcha session cleanup failure",
+                        &restrict_err,
+                    );
+                }
+                let mut guard = state.lock().await;
+                guard.insert(key, *pending);
+                let _ = bot
+                    .answer_callback_query(id)
+                    .text("⚠️ Sistem belum menyelesaikan verifikasi. Coba lagi sebentar.")
+                    .show_alert(true)
+                    .await;
+                return Ok(());
+            }
+            if let Err(err) = bot
+                .delete_message(chat_id, pending.captcha_message_id)
+                .await
+            {
+                let (chat_title, chat_username) = chat_context(&message.chat);
+                log_telegram_error(
+                    &config,
+                    LogLevel::Warn,
+                    chat_id,
+                    chat_title.as_deref(),
+                    chat_username.as_deref(),
+                    "failed to delete captcha message after verification",
                     &err,
                 );
             }
@@ -707,7 +1144,7 @@ async fn restore_chat_permissions(
     Ok(())
 }
 
-async fn ban_user_and_maybe_release(bot: &Bot, config: &Arc<Config>, request: BanRequest) {
+async fn ban_user_and_maybe_release(bot: &Bot, config: &Arc<Config>, request: BanRequest) -> bool {
     let BanRequest {
         chat_id,
         user_id,
@@ -719,7 +1156,13 @@ async fn ban_user_and_maybe_release(bot: &Bot, config: &Arc<Config>, request: Ba
         error_context,
     } = request;
 
-    if let Err(err) = bot.ban_chat_member(chat_id, user_id).await {
+    let release_time = Utc::now() + ChronoDuration::seconds(config.ban_release_after_secs as i64);
+    let release_at = release_time.timestamp();
+    let mut ban_request = bot.ban_chat_member(chat_id, user_id);
+    if config.ban_release_enabled {
+        ban_request = ban_request.until_date(release_time);
+    }
+    if let Err(err) = ban_request.await {
         log_telegram_error(
             config,
             LogLevel::Error,
@@ -729,16 +1172,24 @@ async fn ban_user_and_maybe_release(bot: &Bot, config: &Arc<Config>, request: Ba
             error_context,
             &err,
         );
-        return;
+        return false;
     }
 
     if !config.ban_release_enabled {
-        return;
+        return true;
     }
     let Some(store) = ban_release_store else {
-        return;
+        log_telegram_error(
+            config,
+            LogLevel::Error,
+            chat_id,
+            chat_title.as_deref(),
+            chat_username.as_deref(),
+            "ban release store unavailable after user ban",
+            &"state store unavailable",
+        );
+        return true;
     };
-    let release_at = Utc::now().timestamp() + config.ban_release_after_secs as i64;
     let Ok(user_id_i64) = i64::try_from(user_id.0) else {
         let err = "user id out of range";
         log_telegram_error(
@@ -750,7 +1201,7 @@ async fn ban_user_and_maybe_release(bot: &Bot, config: &Arc<Config>, request: Ba
             "failed to store ban release job (user id out of range)",
             &err,
         );
-        return;
+        return true;
     };
     if let Err(err) = store
         .upsert_job(BanReleaseJob {
@@ -774,6 +1225,7 @@ async fn ban_user_and_maybe_release(bot: &Bot, config: &Arc<Config>, request: Ba
             &err,
         );
     }
+    true
 }
 
 fn is_command(input: &str, cmd: &str) -> bool {

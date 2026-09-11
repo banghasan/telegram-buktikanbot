@@ -68,13 +68,14 @@ CAPTCHA_OPTION_DIGITS_TO_EMOJI=true
 DELETE_JOIN_MESSAGE=true
 DELETE_LEFT_MESSAGE=true
 BAN_RELEASE_ENABLED=false
-BAN_RELEASE_AFTER_SECONDS=21600
+BAN_RELEASE_AFTER_SECONDS=14400
 BAN_RELEASE_DB_PATH=buktikan.sqlite
 LOG_ENABLED=true
 LOG_JSON=false
 LOG_LEVEL=info
 CAPTCHA_LOG_ENABLED=false
 CAPTCHA_LOG_CHAT_ID=
+CAPTCHA_LOG_MESSAGE_THREAD_ID=
 TIMEZONE=Asia/Jakarta
 ```
 
@@ -90,13 +91,14 @@ Environment variables:
 - `DELETE_JOIN_MESSAGE`: delete join messages (default true).
 - `DELETE_LEFT_MESSAGE`: delete left messages (default true).
 - `BAN_RELEASE_ENABLED`: `true` to auto-unban users after a kick/ban, `false` to disable (default `false`).
-- `BAN_RELEASE_AFTER_SECONDS`: delay before auto-unban (default 21600 = 6 hours).
-- `BAN_RELEASE_DB_PATH`: SQLite database path for auto-unban schedule (default `/data/buktikan.sqlite`).
+- `BAN_RELEASE_AFTER_SECONDS`: delay before auto-unban (default 14400 = 4 hours).
+- `BAN_RELEASE_DB_PATH`: SQLite database path for CAPTCHA state and auto-unban schedule (default `buktikan.sqlite`; Docker Compose maps it to `/data/buktikan.sqlite`).
 - `LOG_ENABLED`: `true` to enable logs, `false` to disable.
 - `LOG_JSON`: `true` for JSON logs, `false` for colored logs.
 - `LOG_LEVEL`: `info`, `warn`, or `error` (default `info`).
 - `CAPTCHA_LOG_ENABLED`: `true` to send captcha logs to a target chat, `false` to disable (default `false`).
 - `CAPTCHA_LOG_CHAT_ID`: target chat/group/channel ID for captcha logs.
+- `CAPTCHA_LOG_MESSAGE_THREAD_ID`: optional forum topic/thread ID for captcha and ban-release logs. If empty, logs go to the chat/general topic.
 - `TIMEZONE`: log timezone (default `Asia/Jakarta`).
 - `RUN_MODE`: `polling` (default) or `webhook`.
 
@@ -146,23 +148,28 @@ See the full guide in [BUILD_FROM_SOURCE.en.md](BUILD_FROM_SOURCE.en.md).
 ### Pull Image (GHCR)
 
 ```bash
-docker pull ghcr.io/banghasan/telegram-buktikanbot:latest
-```
-
-Or use a version tag:
-
-```bash
 docker pull ghcr.io/banghasan/telegram-buktikanbot:<version>
 ```
+
+Use an explicit version tag so the deployed image is reproducible.
 
 ### Docker Compose
 
 1) Fill `.env` and make sure the bot token is set.
 
+Compose uses a fixed version tag so deployments are reproducible. When upgrading,
+set `BOT_IMAGE` to the version tag you want to deploy.
+
 2) Run:
 
 ```bash
 docker compose up -d
+```
+
+Example image upgrade:
+
+```bash
+BOT_IMAGE=ghcr.io/banghasan/telegram-buktikanbot:1.9.0 docker compose up -d
 ```
 
 Override `.env` values at runtime:
@@ -181,7 +188,8 @@ For webhook mode via Docker Compose, see [`WEBHOOK.md`](./WEBHOOK.md) and the ex
 5. Wrong too many times or timeout: bot removes the user.
 
 ## Notes
-- Verification state is kept in memory. A restart clears pending state.
+- CAPTCHA state is persisted in SQLite. After a restart, active sessions are reconciled and a fresh CAPTCHA is sent; the user remains restricted during recovery.
+- When `BAN_RELEASE_ENABLED=true`, bans use Telegram's `until_date` and are also recorded in SQLite. `until_date` provides automatic expiry if the worker or container stops.
 - For security, do not commit `.env` to the repo.
 - Ensure the bot has the required admin permissions (see Requirements).
 - If you use webhooks behind an SSL proxy (e.g., Cloudflare) and inline buttons do not respond, make sure the `X-Telegram-Bot-Api-Secret-Token` header is forwarded. If you cannot forward it, temporarily unset `WEBHOOK_SECRET_TOKEN`.

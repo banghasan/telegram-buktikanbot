@@ -23,6 +23,8 @@ Bot akan membangun URL final: `WEBHOOK_URL + WEBHOOK_PATH`.
 
 Catatan Docker: jika memakai image Docker, contoh env ada di
 `/usr/local/share/telegram-buktikanbot/.env.example`.
+Untuk `docker-compose.webhook.yml`, isi juga `DOMAIN` dan `EMAIL` pada `.env`; keduanya
+dipakai Caddy untuk TLS otomatis.
 
 ## Reverse Proxy (Disarankan)
 Telegram mengirim HTTPS ke reverse proxy, lalu proxy meneruskan HTTP ke bot:

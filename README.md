@@ -11,7 +11,7 @@
 
 Read this README in English: [README.en.md](./README.en.md)
 
-Bot Telegram untuk memverifikasi user baru yang masuk grup menggunakan CAPTCHA bergambar. Ketika user masuk grup, hak akses dicabut semua -- hanya bisa kirim teks.
+Bot Telegram untuk memverifikasi user baru yang masuk grup menggunakan CAPTCHA bergambar. Ketika user masuk grup, semua hak akses dicabut -- user hanya dapat berinteraksi melalui tombol CAPTCHA.
 User wajib menebak teks pada gambar dalam waktu tertentu, jika tidak menjawab dengan benar dalam waktu tertentu,
 maka bot akan mengeluarkan user dari grup. Jika benar, bot menghapus gambar CAPTCHA
 dan hak akses user dipulihkan.
@@ -21,18 +21,18 @@ dan hak akses user dipulihkan.
 ## Fitur
 - Kirim CAPTCHA gambar ke user baru.
 - Panjang teks CAPTCHA dapat diatur lewat `.env`.
-- User baru bergabung akan dibatasi hanya boleh kirim teks saja
+- User baru bergabung tidak dapat mengirim pesan dan hanya dapat menekan tombol CAPTCHA.
 - Timeout verifikasi (default 120 detik), bisa disesuaikan sendiri.
 - Interval update caption (default 10 detik), bisa disesuaikan sendiri.
-- Jawaban benar: hapus pesan CAPTCHA + pesan jawaban.
+- Jawaban benar: hapus pesan CAPTCHA dan pulihkan hak akses user.
 - Jawaban salah terhapus, jika timeout: kick user dari grup.
 - User terverifikasi, hak akses grup dipulihkan.
 
 ## Persyaratan
 - Bot Telegram yang sudah dibuat lewat BotFather.
 - Bot jadi admin grup dengan izin:
-  - Delete messages (hapus pesan CAPTCHA + jawaban user)
-  - Ban users / Restrict members (batasi user ke text-only dan kick saat timeout)
+  - Delete messages (hapus pesan CAPTCHA, join/left, dan pesan terblokir)
+  - Ban users / Restrict members (cabut hak akses, ban saat gagal, dan unban sementara)
   - (Opsional) Manage messages jika ingin bot bisa menghapus pesan di semua tipe grup
 
 ## Menjalankan dari Release
@@ -82,7 +82,7 @@ CAPTCHA_OPTION_DIGITS_TO_EMOJI=true
 DELETE_JOIN_MESSAGE=true
 DELETE_LEFT_MESSAGE=true
 BAN_RELEASE_ENABLED=false
-BAN_RELEASE_AFTER_SECONDS=21600
+BAN_RELEASE_AFTER_SECONDS=14400
 BAN_RELEASE_DB_PATH=buktikan.sqlite
 LOG_ENABLED=true
 LOG_JSON=false
@@ -105,8 +105,8 @@ Keterangan variabel:
 - `DELETE_JOIN_MESSAGE`: hapus pesan join Telegram saat user masuk (default true).
 - `DELETE_LEFT_MESSAGE`: hapus pesan left Telegram saat user keluar (default true).
 - `BAN_RELEASE_ENABLED`: `true` untuk melepas (unban) user otomatis setelah kick/ban, `false` untuk nonaktif (default `false`).
-- `BAN_RELEASE_AFTER_SECONDS`: lama waktu tunggu sebelum unban otomatis (default 21600 = 6 jam).
-- `BAN_RELEASE_DB_PATH`: path database SQLite untuk jadwal auto-unban (default `/data/buktikan.sqlite`).
+- `BAN_RELEASE_AFTER_SECONDS`: lama waktu tunggu sebelum unban otomatis (default 14400 = 4 jam).
+- `BAN_RELEASE_DB_PATH`: path database SQLite untuk state CAPTCHA dan jadwal auto-unban (default `buktikan.sqlite`; Docker Compose mengarahkannya ke `/data/buktikan.sqlite`).
 - `LOG_ENABLED`: `true` untuk tampilkan log, `false` untuk nonaktif.
 - `LOG_JSON`: `true` untuk output log JSON, `false` untuk log berwarna.
 - `LOG_LEVEL`: `info`, `warn`, atau `error` (default `info`).
@@ -162,23 +162,28 @@ Lihat panduan lengkap di [BUILD_FROM_SOURCE.md](BUILD_FROM_SOURCE.md).
 ### Pull Image (GHCR)
 
 ```bash
-docker pull ghcr.io/banghasan/telegram-buktikanbot:latest
-```
-
-Atau gunakan tag versi:
-
-```bash
 docker pull ghcr.io/banghasan/telegram-buktikanbot:<versi>
 ```
+
+Gunakan tag versi yang eksplisit agar image yang dijalankan dapat direproduksi.
 
 ### Docker Compose
 
 1) Isi `.env` dan pastikan token bot terisi.
 
+Compose memakai tag versi yang tetap agar deployment reproducible. Saat upgrade, set
+`BOT_IMAGE` ke tag versi yang ingin dipakai.
+
 2) Jalankan:
 
 ```bash
 docker compose up -d
+```
+
+Contoh upgrade image:
+
+```bash
+BOT_IMAGE=ghcr.io/banghasan/telegram-buktikanbot:1.9.0 docker compose up -d
 ```
 
 Override nilai `.env` saat menjalankan:
@@ -197,7 +202,8 @@ Untuk mode webhook via Docker Compose, lihat [`WEBHOOK.md`](./WEBHOOK.md) dan co
 5. Salah atau timeout: bot kick user.
 
 ## Catatan
-- State verifikasi disimpan di memori. Jika bot restart, state pending akan hilang.
+- State CAPTCHA disimpan di SQLite. Jika bot restart, sesi yang masih aktif akan direkonsiliasi dan CAPTCHA baru dikirim; user tetap dibatasi selama proses pemulihan.
+- Jika `BAN_RELEASE_ENABLED=true`, ban memakai `until_date` Telegram sekaligus dicatat ke SQLite. `until_date` menjadi fallback otomatis bila worker aplikasi atau container berhenti.
 - Untuk keamanan, jangan commit file `.env` ke repo.
 - Pastikan bot punya izin admin di grup sesuai daftar di bagian "Persyaratan".
 - Jika memakai webhook lewat proxy SSL (misalnya Cloudflare) dan tombol inline tidak merespons, pastikan header `X-Telegram-Bot-Api-Secret-Token` diteruskan. Jika tidak bisa, kosongkan `WEBHOOK_SECRET_TOKEN` untuk sementara.
