@@ -6,7 +6,7 @@ rust-version = "1.98.1"
 
 [dependencies]
 teloxide = { version = "0.17.0", default-features = false, features = ["macros", "rustls", "webhooks-axum"] }
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal"] }
 dotenvy = "0.15"
 rand = "0.8"
