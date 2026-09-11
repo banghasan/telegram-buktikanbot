@@ -185,6 +185,16 @@ Setiap Pull Request menjalankan pemeriksaan otomatis melalui GitHub Actions:
 
 Workflow ini tidak berjalan pada push biasa.
 
+## Release GitHub Actions
+
+Jalankan workflow `1) Release` saja. Setelah release binary dan tag selesai,
+workflow tersebut otomatis menjalankan build serta push image Docker untuk versi
+yang sama. Job `Docker Image` akan terlihat sebagai bagian dari run release.
+
+Workflow `2) Docker Image` tetap dapat dijalankan manual untuk rebuild image lama;
+isi versi release secara eksplisit. Jangan menjalankan release ulang hanya karena
+build image perlu diulang.
+
 ## Docker
 
 ### Pull Image (GHCR)

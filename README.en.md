@@ -171,6 +171,16 @@ Every Pull Request runs automated checks through GitHub Actions:
 
 The workflow does not run on ordinary pushes.
 
+## GitHub Actions Releases
+
+Run the `1) Release` workflow only. After the binary release and tag are created,
+the workflow automatically builds and pushes the Docker image for the same
+version. The `Docker Image` job appears as part of the release run.
+
+The `2) Docker Image` workflow remains available for manually rebuilding an older
+release; enter the release version explicitly. Do not rerun the release just to
+rebuild its Docker image.
+
 ## Docker
 
 ### Pull Image (GHCR)
