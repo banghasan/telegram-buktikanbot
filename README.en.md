@@ -13,6 +13,7 @@ A Telegram bot that verifies new group members using an image CAPTCHA. When a us
 - Correct answer: CAPTCHA message removed and user permissions restored.
 - Wrong answers are cleared; timeout or too many wrong attempts: user is removed.
 - Inline buttons for answers, reshuffled after a wrong answer.
+- Private admin panel to inspect pending ban releases and release them with inline buttons.
 
 ## Requirements
 - A Telegram bot created via BotFather.
@@ -57,6 +58,7 @@ The `.env.example` file is in the repo root.
 
 ```env
 BOT_TOKEN=your-telegram-bot-token
+ADMIN_USER_IDS=123456789,987654321
 CAPTCHA_LEN=6
 CAPTCHA_TIMEOUT_SECONDS=120
 CAPTCHA_CAPTION_UPDATE_SECONDS=10
@@ -81,6 +83,7 @@ TIMEZONE=Asia/Jakarta
 
 Environment variables:
 - `BOT_TOKEN`: Telegram bot token.
+- `ADMIN_USER_IDS`: comma-separated Telegram user IDs allowed to use `/pending` and `/bans` in private chat. Use numeric `from.id` values, not usernames. Leave empty to disable the admin panel.
 - `CAPTCHA_LEN`: CAPTCHA text length.
 - `CAPTCHA_TIMEOUT_SECONDS`: maximum time to solve.
 - `CAPTCHA_CAPTION_UPDATE_SECONDS`: caption countdown update interval (default 10 seconds).
@@ -129,6 +132,9 @@ Alternatively (less secure), run the container as root with `user: "0:0"` in `do
 - `/start`: bot info.
 - `/ping`: response time check.
 - `/ver`, `/versi`, `/version`: app version info.
+- `/pending` or `/bans`: admin panel listing ban-release jobs still stored in SQLite. Only users in `ADMIN_USER_IDS` can use it. The panel provides pagination, refresh, and inline release buttons with a second confirmation step.
+
+The admin panel only lists bans created and recorded by this bot while `BAN_RELEASE_ENABLED=true`; manually created bans or bans created by another bot cannot be discovered from this database. After a successful manual release, the SQLite job is deleted and the release log is sent to the configured log chat/topic, replying to the related failure log when the parent message is still available. Manual logs also include the admin ID that performed the release.
 
 ## Versioning
 
@@ -188,7 +194,7 @@ docker compose up -d
 Example image upgrade:
 
 ```bash
-BOT_IMAGE=ghcr.io/banghasan/telegram-buktikanbot:1.9.3 docker compose up -d
+BOT_IMAGE=ghcr.io/banghasan/telegram-buktikanbot:1.9.4 docker compose up -d
 ```
 
 Override `.env` values at runtime:

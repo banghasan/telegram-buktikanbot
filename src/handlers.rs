@@ -5,8 +5,9 @@ use std::time::{Duration, Instant};
 use chrono::{Duration as ChronoDuration, TimeZone, Utc};
 use teloxide::prelude::*;
 use teloxide::types::{
-    CallbackQuery, ChatMemberStatus, ChatMemberUpdated, ChatPermissions, InlineKeyboardButton,
-    InlineKeyboardMarkup, InputFile, InputMedia, InputMediaPhoto, Message, ParseMode, UserId,
+    CallbackQuery, ChatId, ChatMemberStatus, ChatMemberUpdated, ChatPermissions,
+    InlineKeyboardButton, InlineKeyboardMarkup, InputFile, InputMedia, InputMediaPhoto, Message,
+    MessageId, ParseMode, User, UserId,
 };
 
 use crate::ban_release::{BanReleaseJob, BanReleaseStore};
@@ -21,6 +22,8 @@ use crate::logging::{
     log_user_event_with_chat,
 };
 use crate::utils::{escape_html, sanitize_log_text};
+
+const ADMIN_PENDING_PAGE_SIZE: i64 = 5;
 
 struct BanRequest {
     chat_id: ChatId,
@@ -686,7 +689,7 @@ pub async fn on_text(
     msg: Message,
     state: SharedState,
     config: Arc<Config>,
-    _ban_release_store: Option<Arc<BanReleaseStore>>,
+    ban_release_store: Option<Arc<BanReleaseStore>>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let Some(user) = msg.from() else {
         return Ok(());
@@ -725,6 +728,22 @@ pub async fn on_text(
 
     if msg.chat.is_private() {
         let command = text.split_whitespace().next().unwrap_or("");
+
+        if is_admin_pending_command(command) {
+            if !config.is_admin(user.id.0) {
+                bot.send_message(msg.chat.id, "⛔ Perintah ini khusus admin.")
+                    .await?;
+                return Ok(());
+            }
+            let Some(store) = ban_release_store.as_ref() else {
+                bot.send_message(msg.chat.id, "⚠️ Database jadwal ban belum tersedia.")
+                    .await?;
+                return Ok(());
+            };
+            send_admin_pending_panel(&bot, msg.chat.id, store, &config, 0, None).await?;
+            return Ok(());
+        }
+
         if is_command(command, "ping") {
             let start = Instant::now();
             let sent = bot
@@ -812,6 +831,172 @@ pub async fn on_text(
     Ok(())
 }
 
+async fn send_admin_pending_panel(
+    bot: &Bot,
+    chat_id: ChatId,
+    store: &BanReleaseStore,
+    config: &Config,
+    requested_page: usize,
+    message_id: Option<MessageId>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let total = store.count_pending().await?;
+    let total_usize = usize::try_from(total).unwrap_or(0);
+    let page_size = usize::try_from(ADMIN_PENDING_PAGE_SIZE).unwrap_or(5);
+    let total_pages = total_usize.div_ceil(page_size).max(1);
+    let page = requested_page.min(total_pages - 1);
+    let offset = i64::try_from(page)
+        .unwrap_or(i64::MAX / ADMIN_PENDING_PAGE_SIZE)
+        .saturating_mul(ADMIN_PENDING_PAGE_SIZE);
+    let jobs = store.fetch_pending(offset, ADMIN_PENDING_PAGE_SIZE).await?;
+    let text = render_admin_pending_panel(config, &jobs, total, page, total_pages);
+    let keyboard = build_admin_pending_keyboard(&jobs, page, total_pages);
+
+    if let Some(message_id) = message_id {
+        bot.edit_message_text(chat_id, message_id, text)
+            .parse_mode(ParseMode::Html)
+            .disable_web_page_preview(true)
+            .reply_markup(keyboard)
+            .await?;
+    } else {
+        bot.send_message(chat_id, text)
+            .parse_mode(ParseMode::Html)
+            .disable_web_page_preview(true)
+            .reply_markup(keyboard)
+            .await?;
+    }
+    Ok(())
+}
+
+fn render_admin_pending_panel(
+    config: &Config,
+    jobs: &[BanReleaseJob],
+    total: i64,
+    page: usize,
+    total_pages: usize,
+) -> String {
+    let now = Utc::now().timestamp();
+    let mut lines = vec![
+        format!("🛡️ <b>Pending Ban Release ({total})</b>"),
+        "Daftar ban yang masih tersimpan dan dapat dilepas manual:".to_string(),
+    ];
+
+    if jobs.is_empty() {
+        lines.push(String::new());
+        lines.push("✅ Tidak ada user yang menunggu release.".to_string());
+    } else {
+        for (index, job) in jobs.iter().enumerate() {
+            let name = escape_html(&sanitize_log_text(job.user_name.trim()));
+            let username = job
+                .user_username
+                .as_deref()
+                .map(|value| format!(" (@{})", escape_html(&sanitize_log_text(value.trim()))));
+            let group = format_admin_group_label(job);
+            let schedule = format_log_timestamp(config, job.release_at);
+            let release_status = if job.release_at <= now {
+                "⚠️ lewat jadwal"
+            } else {
+                "⏳ jadwal unban"
+            };
+            lines.push(String::new());
+            lines.push(format!(
+                "<b>{}.</b> 🙋🏽 {}{}",
+                index + 1,
+                name,
+                username.unwrap_or_default()
+            ));
+            lines.push(format!("   ├👥 {}", group));
+            lines.push(format!("   ├🆔 user: <code>{}</code>", job.user_id));
+            lines.push(format!("   ├🆔 chat: <code>{}</code>", job.chat_id));
+            lines.push(format!(
+                "   └{}: <code>{}</code>",
+                release_status,
+                escape_html(&schedule)
+            ));
+        }
+    }
+
+    lines.push(String::new());
+    lines.push(format!("Halaman {} dari {}", page + 1, total_pages));
+    lines.join("\n")
+}
+
+fn format_admin_group_label(job: &BanReleaseJob) -> String {
+    let label = match (job.chat_username.as_deref(), job.chat_title.as_deref()) {
+        (Some(username), Some(title)) => format!("@{} : {}", username.trim(), title.trim()),
+        (Some(username), None) => format!("@{}", username.trim()),
+        (None, Some(title)) => title.trim().to_string(),
+        (None, None) => "unknown".to_string(),
+    };
+    escape_html(&sanitize_log_text(&label))
+}
+
+fn build_admin_pending_keyboard(
+    jobs: &[BanReleaseJob],
+    page: usize,
+    total_pages: usize,
+) -> InlineKeyboardMarkup {
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = jobs
+        .iter()
+        .enumerate()
+        .map(|(index, job)| {
+            vec![InlineKeyboardButton::callback(
+                format!("✅ Lepas #{}", index + 1),
+                format!("admin:confirm:{}:{}:{}", job.chat_id, job.user_id, page),
+            )]
+        })
+        .collect();
+
+    let mut navigation = vec![InlineKeyboardButton::callback(
+        "🔄 Refresh",
+        format!("admin:refresh:{page}"),
+    )];
+    if page > 0 {
+        navigation.insert(
+            0,
+            InlineKeyboardButton::callback("⬅️", format!("admin:refresh:{}", page - 1)),
+        );
+    }
+    if page + 1 < total_pages {
+        navigation.push(InlineKeyboardButton::callback(
+            "➡️",
+            format!("admin:refresh:{}", page + 1),
+        ));
+    }
+    rows.push(navigation);
+    InlineKeyboardMarkup::new(rows)
+}
+
+fn render_admin_confirmation(config: &Config, job: &BanReleaseJob) -> String {
+    format!(
+        "⚠️ <b>Konfirmasi release ban</b>\n\n\
+         🙋🏽 {}{}\n\
+         ├👥 {}\n\
+         ├🆔 user: <code>{}</code>\n\
+         ├🆔 chat: <code>{}</code>\n\
+         └📅 jadwal unban: <code>{}</code>\n\n\
+         Lepaskan ban user ini sekarang?",
+        escape_html(&sanitize_log_text(job.user_name.trim())),
+        job.user_username
+            .as_deref()
+            .map(|value| format!(" (@{})", escape_html(&sanitize_log_text(value.trim()))))
+            .unwrap_or_default(),
+        format_admin_group_label(job),
+        job.user_id,
+        job.chat_id,
+        escape_html(&format_log_timestamp(config, job.release_at)),
+    )
+}
+
+fn build_admin_confirmation_keyboard(job: &BanReleaseJob, page: usize) -> InlineKeyboardMarkup {
+    InlineKeyboardMarkup::new(vec![vec![
+        InlineKeyboardButton::callback(
+            "✅ Ya, lepaskan",
+            format!("admin:release:{}:{}:{}", job.chat_id, job.user_id, page),
+        ),
+        InlineKeyboardButton::callback("↩️ Batal", format!("admin:cancel:{page}")),
+    ]])
+}
+
 pub async fn on_callback_query(
     bot: Bot,
     query: CallbackQuery,
@@ -829,6 +1014,9 @@ pub async fn on_callback_query(
     let Some(data) = data.as_deref() else {
         return Ok(());
     };
+    if data.starts_with("admin:") {
+        return on_admin_callback(&bot, id, &from, data, message, &config, ban_release_store).await;
+    }
     if !data.starts_with("captcha:") {
         return Ok(());
     }
@@ -1236,6 +1424,169 @@ pub async fn on_callback_query(
     Ok(())
 }
 
+async fn on_admin_callback(
+    bot: &Bot,
+    callback_id: String,
+    from: &User,
+    data: &str,
+    message: Option<Message>,
+    config: &Arc<Config>,
+    ban_release_store: Option<Arc<BanReleaseStore>>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    if !config.is_admin(from.id.0) {
+        let _ = bot
+            .answer_callback_query(callback_id)
+            .text("⛔ Perintah ini khusus admin.")
+            .show_alert(true)
+            .await;
+        return Ok(());
+    }
+
+    let Some(message) = message else {
+        let _ = bot
+            .answer_callback_query(callback_id)
+            .text("⚠️ Panel admin sudah tidak tersedia.")
+            .show_alert(true)
+            .await;
+        return Ok(());
+    };
+    if !message.chat.is_private() {
+        let _ = bot
+            .answer_callback_query(callback_id)
+            .text("⚠️ Panel admin hanya dapat digunakan di private chat.")
+            .show_alert(true)
+            .await;
+        return Ok(());
+    }
+
+    let Some(store) = ban_release_store.as_ref() else {
+        let _ = bot
+            .answer_callback_query(callback_id)
+            .text("⚠️ Database jadwal ban belum tersedia.")
+            .show_alert(true)
+            .await;
+        return Ok(());
+    };
+
+    if let Some(page) = parse_admin_page_callback(data, "refresh") {
+        send_admin_pending_panel(bot, message.chat.id, store, config, page, Some(message.id))
+            .await?;
+        let _ = bot.answer_callback_query(callback_id).await;
+        return Ok(());
+    }
+
+    if let Some((chat_id, user_id, page)) = parse_admin_job_callback(data, "confirm") {
+        let Some(job) = store.get_job(chat_id, user_id).await? else {
+            let _ = bot
+                .answer_callback_query(callback_id)
+                .text("ℹ️ Job sudah tidak tersedia. Daftar akan diperbarui.")
+                .show_alert(true)
+                .await;
+            send_admin_pending_panel(bot, message.chat.id, store, config, page, Some(message.id))
+                .await?;
+            return Ok(());
+        };
+        bot.edit_message_text(
+            message.chat.id,
+            message.id,
+            render_admin_confirmation(config, &job),
+        )
+        .parse_mode(ParseMode::Html)
+        .disable_web_page_preview(true)
+        .reply_markup(build_admin_confirmation_keyboard(&job, page))
+        .await?;
+        let _ = bot.answer_callback_query(callback_id).await;
+        return Ok(());
+    }
+
+    if let Some(page) = parse_admin_page_callback(data, "cancel") {
+        send_admin_pending_panel(bot, message.chat.id, store, config, page, Some(message.id))
+            .await?;
+        let _ = bot.answer_callback_query(callback_id).await;
+        return Ok(());
+    }
+
+    if let Some((chat_id, user_id, page)) = parse_admin_job_callback(data, "release") {
+        let Some(job) = store.get_job(chat_id, user_id).await? else {
+            let _ = bot
+                .answer_callback_query(callback_id)
+                .text("ℹ️ Job sudah tidak tersedia. Daftar akan diperbarui.")
+                .show_alert(true)
+                .await;
+            send_admin_pending_panel(bot, message.chat.id, store, config, page, Some(message.id))
+                .await?;
+            return Ok(());
+        };
+
+        match release_ban_job(bot, config, store, &job, Some(from.id)).await {
+            Ok(()) => {
+                let _ = bot
+                    .answer_callback_query(callback_id)
+                    .text("✅ Ban berhasil dilepas.")
+                    .show_alert(false)
+                    .await;
+                send_admin_pending_panel(
+                    bot,
+                    message.chat.id,
+                    store,
+                    config,
+                    page,
+                    Some(message.id),
+                )
+                .await?;
+            }
+            Err(err) => {
+                log_system_level(
+                    config,
+                    LogLevel::Warn,
+                    &format!(
+                        "manual ban release failed; chat={} user={}: {err}",
+                        job.chat_id, job.user_id
+                    ),
+                );
+                let _ = bot
+                    .answer_callback_query(callback_id)
+                    .text("⚠️ Ban belum dapat dilepas. Pastikan bot masih admin di grup.")
+                    .show_alert(true)
+                    .await;
+            }
+        }
+        return Ok(());
+    }
+
+    let _ = bot
+        .answer_callback_query(callback_id)
+        .text("⚠️ Tombol admin tidak dikenali.")
+        .show_alert(true)
+        .await;
+    Ok(())
+}
+
+fn is_admin_pending_command(input: &str) -> bool {
+    is_command(input, "pending") || is_command(input, "bans")
+}
+
+fn parse_admin_page_callback(data: &str, action: &str) -> Option<usize> {
+    let mut parts = data.split(':');
+    (parts.next() == Some("admin") && parts.next() == Some(action))
+        .then(|| parts.next()?.parse::<usize>().ok())?
+        .filter(|_| parts.next().is_none())
+}
+
+fn parse_admin_job_callback(data: &str, action: &str) -> Option<(i64, i64, usize)> {
+    let mut parts = data.split(':');
+    if parts.next() != Some("admin") || parts.next() != Some(action) {
+        return None;
+    }
+    let chat_id = parts.next()?.parse::<i64>().ok()?;
+    let user_id = parts.next()?.parse::<i64>().ok()?;
+    let page = parts.next()?.parse::<usize>().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((chat_id, user_id, page))
+}
+
 pub async fn on_non_text(
     msg: Message,
     config: Arc<Config>,
@@ -1626,9 +1977,144 @@ async fn send_captcha_log_if_enabled(
     }
 }
 
+pub async fn release_ban_job(
+    bot: &Bot,
+    config: &Arc<Config>,
+    store: &BanReleaseStore,
+    job: &BanReleaseJob,
+    released_by: Option<UserId>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let user_id = u64::try_from(job.user_id).map_err(|_| "user ID out of range")?;
+    bot.unban_chat_member(ChatId(job.chat_id), UserId(user_id))
+        .only_if_banned(true)
+        .await?;
+    if store.delete_job(job.chat_id, job.user_id).await? {
+        send_ban_release_log_if_enabled(bot, config, job, released_by).await;
+    }
+    Ok(())
+}
+
+async fn send_ban_release_log_if_enabled(
+    bot: &Bot,
+    config: &Arc<Config>,
+    job: &BanReleaseJob,
+    released_by: Option<UserId>,
+) {
+    if !config.captcha_log_enabled {
+        return;
+    }
+    let Some(target_id) = job.log_chat_id.or(config.captcha_log_chat_id) else {
+        return;
+    };
+
+    let ts = format_log_timestamp(config, Utc::now().timestamp());
+    let full_name = escape_html(&sanitize_log_text(job.user_name.trim()));
+    let username_line = job.user_username.as_deref().map(|raw| {
+        let username = escape_html(&sanitize_log_text(raw.trim()));
+        format!(" ├👤 @{username}")
+    });
+
+    let group_label = match (job.chat_username.as_deref(), job.chat_title.as_deref()) {
+        (Some(username), Some(title)) => format!("@{} : {}", username.trim(), title.trim()),
+        (Some(username), None) => format!("@{}", username.trim()),
+        (None, Some(title)) => title.trim().to_string(),
+        (None, None) => "unknown".to_string(),
+    };
+    let group_label = escape_html(&sanitize_log_text(&group_label));
+
+    let mut lines = Vec::with_capacity(13);
+    lines.push("♻️ BAN — DILEPAS".to_string());
+    lines.push(format!(" ├🕒 kejadian: <code>{}</code>", escape_html(&ts)));
+    lines.push(format!(" ├🙋🏽 {}", full_name));
+    if let Some(line) = username_line {
+        lines.push(line);
+    }
+    lines.push(format!(" ├👥 {}", group_label));
+    lines.push(format!(" ├🆔 user: <code>{}</code>", job.user_id));
+    lines.push(format!(" ├🆔 chat: <code>{}</code>", job.chat_id));
+    lines.push(format!(
+        " ├📅 jadwal unban: <code>{}</code>",
+        escape_html(&format_log_timestamp(config, job.release_at))
+    ));
+    if let Some(released_by) = released_by {
+        lines.push(format!(
+            " ├🛠️ dilepas oleh admin: <code>{}</code>",
+            released_by.0
+        ));
+    }
+    lines.push(" └✅ ban sementara telah dilepas.".to_string());
+    let message = lines.join("\n");
+
+    let mut request = bot
+        .send_message(ChatId(target_id), message)
+        .parse_mode(ParseMode::Html)
+        .disable_web_page_preview(true);
+    let thread_id = if job.log_message_id.is_some() {
+        job.log_message_thread_id
+    } else {
+        job.log_message_thread_id
+            .or(config.captcha_log_message_thread_id)
+    };
+    if let Some(thread_id) = thread_id {
+        request = request.message_thread_id(thread_id);
+    }
+    if let Some(message_id) = job.log_message_id {
+        request = request
+            .reply_to_message_id(MessageId(message_id))
+            .allow_sending_without_reply(true);
+    }
+    if let Err(err) = request.await {
+        log_system_level(
+            config,
+            LogLevel::Warn,
+            &format!("failed to send ban release log: {err}"),
+        );
+    }
+}
+
 fn format_log_timestamp(config: &Config, timestamp: i64) -> String {
     match config.timezone.timestamp_opt(timestamp, 0) {
         chrono::LocalResult::Single(value) => value.format("%Y-%m-%d %H:%M:%S %Z").to_string(),
         _ => format!("invalid timestamp ({timestamp})"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn admin_pending_commands_accept_the_documented_aliases() {
+        assert!(is_admin_pending_command("/pending"));
+        assert!(is_admin_pending_command("/bans@buktikanbot"));
+        assert!(!is_admin_pending_command("/pending-now"));
+    }
+
+    #[test]
+    fn admin_page_callback_parser_rejects_malformed_data() {
+        assert_eq!(
+            parse_admin_page_callback("admin:refresh:2", "refresh"),
+            Some(2)
+        );
+        assert_eq!(
+            parse_admin_page_callback("admin:refresh:2:extra", "refresh"),
+            None
+        );
+        assert_eq!(
+            parse_admin_page_callback("admin:refresh:nope", "refresh"),
+            None
+        );
+    }
+
+    #[test]
+    fn admin_job_callback_parser_supports_negative_chat_ids() {
+        assert_eq!(
+            parse_admin_job_callback("admin:release:-100123:456:3", "release"),
+            Some((-100123, 456, 3))
+        );
+        assert_eq!(
+            parse_admin_job_callback("admin:release:-100123:456", "release"),
+            None
+        );
     }
 }

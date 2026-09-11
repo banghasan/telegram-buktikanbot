@@ -1,10 +1,11 @@
 services:
   telegram-buktikanbot:
-    image: ${BOT_IMAGE:-ghcr.io/banghasan/telegram-buktikanbot:1.9.3}
+    image: ${BOT_IMAGE:-ghcr.io/banghasan/telegram-buktikanbot:1.9.4}
     container_name: telegram-buktikanbot
     restart: unless-stopped
     environment:
       BOT_TOKEN: ${BOT_TOKEN}
+      ADMIN_USER_IDS: ${ADMIN_USER_IDS:-}
       RUN_MODE: webhook
       WEBHOOK_URL: ${WEBHOOK_URL}
       WEBHOOK_PATH: ${WEBHOOK_PATH:-/telegram}

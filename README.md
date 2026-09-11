@@ -27,6 +27,7 @@ dan hak akses user dipulihkan.
 - Jawaban benar: hapus pesan CAPTCHA dan pulihkan hak akses user.
 - Jawaban salah terhapus, jika timeout: kick user dari grup.
 - User terverifikasi, hak akses grup dipulihkan.
+- Panel admin private untuk melihat ban yang menunggu release dan melepasnya dengan tombol inline.
 
 ## Persyaratan
 - Bot Telegram yang sudah dibuat lewat BotFather.
@@ -71,6 +72,7 @@ File `.env.example` ada di root repo.
 
 ```env
 BOT_TOKEN=your-telegram-bot-token
+ADMIN_USER_IDS=123456789,987654321
 CAPTCHA_LEN=6
 CAPTCHA_TIMEOUT_SECONDS=120
 CAPTCHA_CAPTION_UPDATE_SECONDS=10
@@ -95,6 +97,7 @@ TIMEZONE=Asia/Jakarta
 
 Keterangan variabel:
 - `BOT_TOKEN`: token bot Telegram.
+- `ADMIN_USER_IDS`: daftar ID user Telegram yang boleh memakai `/pending` dan `/bans` di private chat, dipisahkan koma. Gunakan ID numerik dari `from.id`, bukan username. Kosongkan untuk menonaktifkan panel admin.
 - `CAPTCHA_LEN`: panjang karakter CAPTCHA.
 - `CAPTCHA_TIMEOUT_SECONDS`: waktu maksimum menebak.
 - `CAPTCHA_CAPTION_UPDATE_SECONDS`: interval update caption countdown (default 10 detik).
@@ -143,6 +146,9 @@ Alternatif (kurang aman), jalankan container sebagai root dengan `user: "0:0"` d
 - `/start`: info bot.
 - `/ping`: cek response time.
 - `/ver`, `/versi`, `/version`: info versi aplikasi.
+- `/pending` atau `/bans`: panel admin berisi daftar ban yang masih tersimpan di SQLite. Hanya user pada `ADMIN_USER_IDS` yang dapat menggunakannya. Panel menyediakan pagination, refresh, dan release melalui tombol inline dengan konfirmasi kedua.
+
+Panel admin hanya mencantumkan ban yang dibuat dan dicatat oleh bot ketika `BAN_RELEASE_ENABLED=true`; ban manual atau ban dari bot lain tidak dapat dideteksi dari database ini. Saat release manual berhasil, job dihapus dari SQLite dan log pelepasan tetap dikirim ke chat/topic log sebagai reply ke log kegagalan terkait jika pesan parent masih tersedia. Log manual juga mencatat ID admin yang melakukan release.
 
 ## Versioning
 
@@ -202,7 +208,7 @@ docker compose up -d
 Contoh upgrade image:
 
 ```bash
-BOT_IMAGE=ghcr.io/banghasan/telegram-buktikanbot:1.9.3 docker compose up -d
+BOT_IMAGE=ghcr.io/banghasan/telegram-buktikanbot:1.9.4 docker compose up -d
 ```
 
 Override nilai `.env` saat menjalankan:

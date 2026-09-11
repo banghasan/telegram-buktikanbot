@@ -25,7 +25,7 @@ impl BanReleaseStore {
 
     pub async fn upsert_job(&self, job: BanReleaseJob) -> Result<(), Box<dyn Error + Send + Sync>> {
         let path = self.db_path.clone();
-        tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || -> Result<(), rusqlite::Error> {
             let conn = open_db(&path)?;
             conn.execute(
                 "INSERT INTO ban_release_jobs
@@ -69,7 +69,7 @@ impl BanReleaseStore {
         log_message_id: i32,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let path = self.db_path.clone();
-        tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || -> Result<(), rusqlite::Error> {
             let conn = open_db(&path)?;
             conn.execute(
                 "UPDATE ban_release_jobs
@@ -217,18 +217,7 @@ impl BanReleaseStore {
                  LIMIT ?2",
             )?;
             let rows = stmt.query_map(params![now_ts, RELEASE_BATCH_SIZE], |row| {
-                Ok(BanReleaseJob {
-                    chat_id: row.get(0)?,
-                    user_id: row.get(1)?,
-                    release_at: row.get(2)?,
-                    user_name: row.get(3)?,
-                    user_username: row.get(4)?,
-                    chat_title: row.get(5)?,
-                    chat_username: row.get(6)?,
-                    log_chat_id: row.get(7)?,
-                    log_message_thread_id: row.get(8)?,
-                    log_message_id: row.get(9)?,
-                })
+                ban_release_job_from_row(row)
             })?;
             let mut out = Vec::new();
             for row in rows {
@@ -240,19 +229,83 @@ impl BanReleaseStore {
         .map_err(|err| err.into())
     }
 
+    pub async fn fetch_pending(
+        &self,
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<BanReleaseJob>, Box<dyn Error + Send + Sync>> {
+        let path = self.db_path.clone();
+        let offset = offset.max(0);
+        let limit = limit.clamp(1, 100);
+        tokio::task::spawn_blocking(move || {
+            let conn = open_db(&path)?;
+            let mut stmt = conn.prepare(
+                "SELECT chat_id, user_id, release_at, user_name, user_username, chat_title, chat_username,
+                        log_chat_id, log_message_thread_id, log_message_id
+                 FROM ban_release_jobs
+                 ORDER BY release_at ASC, chat_id ASC, user_id ASC
+                 LIMIT ?1 OFFSET ?2",
+            )?;
+            let rows = stmt.query_map(params![limit, offset], ban_release_job_from_row)?;
+            let mut out = Vec::new();
+            for row in rows {
+                out.push(row?);
+            }
+            Ok::<_, rusqlite::Error>(out)
+        })
+        .await?
+        .map_err(|err| err.into())
+    }
+
+    pub async fn count_pending(&self) -> Result<i64, Box<dyn Error + Send + Sync>> {
+        let path = self.db_path.clone();
+        tokio::task::spawn_blocking(move || -> Result<i64, rusqlite::Error> {
+            let conn = open_db(&path)?;
+            conn.query_row("SELECT COUNT(*) FROM ban_release_jobs", [], |row| {
+                row.get(0)
+            })
+        })
+        .await?
+        .map_err(|err| err.into())
+    }
+
+    pub async fn get_job(
+        &self,
+        chat_id: i64,
+        user_id: i64,
+    ) -> Result<Option<BanReleaseJob>, Box<dyn Error + Send + Sync>> {
+        let path = self.db_path.clone();
+        tokio::task::spawn_blocking(move || -> Result<Option<BanReleaseJob>, rusqlite::Error> {
+            let conn = open_db(&path)?;
+            let mut stmt = conn.prepare(
+                "SELECT chat_id, user_id, release_at, user_name, user_username, chat_title, chat_username,
+                        log_chat_id, log_message_thread_id, log_message_id
+                 FROM ban_release_jobs
+                 WHERE chat_id = ?1 AND user_id = ?2",
+            )?;
+            let mut rows = stmt.query(params![chat_id, user_id])?;
+            match rows.next()? {
+                Some(row) => Ok(Some(ban_release_job_from_row(row)?)),
+                None => Ok(None),
+            }
+        })
+        .await?
+        .map_err(|err| err.into())
+    }
+
     pub async fn delete_job(
         &self,
         chat_id: i64,
         user_id: i64,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+    ) -> Result<bool, Box<dyn Error + Send + Sync>> {
         let path = self.db_path.clone();
         tokio::task::spawn_blocking(move || {
             let conn = open_db(&path)?;
-            conn.execute(
+            let deleted = conn.execute(
                 "DELETE FROM ban_release_jobs WHERE chat_id = ?1 AND user_id = ?2",
                 params![chat_id, user_id],
             )?;
-            Ok::<_, rusqlite::Error>(())
+            Ok::<_, rusqlite::Error>(deleted > 0)
         })
         .await?
         .map_err(|err| err.into())
@@ -311,6 +364,21 @@ fn init_db(path: &str) -> Result<(), rusqlite::Error> {
             ON captcha_sessions (expires_at);",
     )?;
     Ok(())
+}
+
+fn ban_release_job_from_row(row: &rusqlite::Row<'_>) -> Result<BanReleaseJob, rusqlite::Error> {
+    Ok(BanReleaseJob {
+        chat_id: row.get(0)?,
+        user_id: row.get(1)?,
+        release_at: row.get(2)?,
+        user_name: row.get(3)?,
+        user_username: row.get(4)?,
+        chat_title: row.get(5)?,
+        chat_username: row.get(6)?,
+        log_chat_id: row.get(7)?,
+        log_message_thread_id: row.get(8)?,
+        log_message_id: row.get(9)?,
+    })
 }
 
 fn ensure_column(
@@ -409,8 +477,13 @@ mod tests {
         store.upsert_job(job.clone()).await.unwrap();
         assert_eq!(store.fetch_due(99).await.unwrap(), Vec::new());
         assert_eq!(store.fetch_due(100).await.unwrap(), vec![job.clone()]);
-        store.delete_job(job.chat_id, job.user_id).await.unwrap();
+        assert_eq!(store.count_pending().await.unwrap(), 1);
+        assert_eq!(store.fetch_pending(0, 10).await.unwrap(), vec![job.clone()]);
+        assert_eq!(store.get_job(-100, 42).await.unwrap(), Some(job.clone()));
+        assert!(store.delete_job(job.chat_id, job.user_id).await.unwrap());
         assert!(store.fetch_due(100).await.unwrap().is_empty());
+        assert!(!store.delete_job(job.chat_id, job.user_id).await.unwrap());
+        assert_eq!(store.get_job(-100, 42).await.unwrap(), None);
         remove_database(&path);
     }
 

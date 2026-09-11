@@ -1,9 +1,7 @@
 use std::error::Error;
 use std::sync::Arc;
 
-use chrono::TimeZone;
 use teloxide::prelude::*;
-use teloxide::types::{ChatId, MessageId, ParseMode, UserId};
 use teloxide::update_listeners::webhooks;
 
 mod ban_release;
@@ -14,15 +12,14 @@ mod handlers;
 mod logging;
 mod utils;
 
-use crate::ban_release::{BanReleaseJob, BanReleaseStore, worker_interval};
+use crate::ban_release::{BanReleaseStore, worker_interval};
 use crate::captcha::SharedState;
 use crate::config::{Config, LogLevel, RunMode};
 use crate::handlers::{
     on_callback_query, on_chat_member_updated, on_left_member, on_new_members, on_non_text,
-    on_text, restore_pending_captchas,
+    on_text, release_ban_job, restore_pending_captchas,
 };
 use crate::logging::{log_system, log_system_block, log_system_level};
-use crate::utils::{escape_html, sanitize_log_text};
 
 #[tokio::main]
 async fn main() {
@@ -39,7 +36,8 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let version_line = format!("(system) version: {}", env!("CARGO_PKG_VERSION"));
     let config_line = format!(
-        "(system) config: captcha_len={} timeout={}s update={}s size={}x{} options={} attempts={} option_digits_to_emoji={} delete_join_message={} delete_left_message={} ban_release_enabled={} ban_release_after_secs={} ban_release_db_path={} log_json={} log_level={} captcha_log_enabled={} captcha_log_chat_id={} captcha_log_message_thread_id={} timezone={} run_mode={}",
+        "(system) config: admin_user_count={} captcha_len={} timeout={}s update={}s size={}x{} options={} attempts={} option_digits_to_emoji={} delete_join_message={} delete_left_message={} ban_release_enabled={} ban_release_after_secs={} ban_release_db_path={} log_json={} log_level={} captcha_log_enabled={} captcha_log_chat_id={} captcha_log_message_thread_id={} timezone={} run_mode={}",
+        config.admin_user_ids.len(),
         config.captcha_len,
         config.captcha_timeout_secs,
         config.captcha_caption_update_secs,
@@ -283,7 +281,7 @@ async fn process_due_releases(
     let now = chrono::Utc::now().timestamp();
     let due = store.fetch_due(now).await?;
     for job in due {
-        let Ok(user_id_u64) = u64::try_from(job.user_id) else {
+        if u64::try_from(job.user_id).is_err() {
             log_system_level(
                 config,
                 LogLevel::Warn,
@@ -294,11 +292,8 @@ async fn process_due_releases(
             );
             store.delete_job(job.chat_id, job.user_id).await?;
             continue;
-        };
-        if let Err(err) = bot
-            .unban_chat_member(ChatId(job.chat_id), UserId(user_id_u64))
-            .await
-        {
+        }
+        if let Err(err) = release_ban_job(bot, config, store.as_ref(), &job, None).await {
             log_system_level(
                 config,
                 LogLevel::Warn,
@@ -307,84 +302,7 @@ async fn process_due_releases(
                     job.user_id, job.chat_id
                 ),
             );
-            continue;
         }
-        store.delete_job(job.chat_id, job.user_id).await?;
-        send_ban_release_log_if_enabled(bot, config, &job).await;
     }
     Ok(())
-}
-
-async fn send_ban_release_log_if_enabled(bot: &Bot, config: &Arc<Config>, job: &BanReleaseJob) {
-    if !config.captcha_log_enabled {
-        return;
-    }
-    let Some(target_id) = job.log_chat_id.or(config.captcha_log_chat_id) else {
-        return;
-    };
-
-    let ts = format_log_timestamp(config, chrono::Utc::now().timestamp());
-    let full_name = escape_html(&sanitize_log_text(job.user_name.trim()));
-    let username_line = job.user_username.as_deref().map(|raw| {
-        let username = escape_html(&sanitize_log_text(raw.trim()));
-        format!(" ├👤 @{username}")
-    });
-
-    let group_label = match (job.chat_username.as_deref(), job.chat_title.as_deref()) {
-        (Some(username), Some(title)) => format!("@{} : {}", username.trim(), title.trim()),
-        (Some(username), None) => format!("@{}", username.trim()),
-        (None, Some(title)) => title.trim().to_string(),
-        (None, None) => "unknown".to_string(),
-    };
-    let group_label = escape_html(&sanitize_log_text(&group_label));
-
-    let mut lines = Vec::with_capacity(12);
-    lines.push("♻️ BAN — DILEPAS".to_string());
-    lines.push(format!(" ├🕒 kejadian: <code>{}</code>", escape_html(&ts)));
-    lines.push(format!(" ├🙋🏽 {}", full_name));
-    if let Some(line) = username_line {
-        lines.push(line);
-    }
-    lines.push(format!(" ├👥 {}", group_label));
-    lines.push(format!(" ├🆔 user: <code>{}</code>", job.user_id));
-    lines.push(format!(" ├🆔 chat: <code>{}</code>", job.chat_id));
-    lines.push(format!(
-        " ├📅 jadwal unban: <code>{}</code>",
-        escape_html(&format_log_timestamp(config, job.release_at))
-    ));
-    lines.push(" └✅ ban sementara telah dilepas.".to_string());
-    let message = lines.join("\n");
-
-    let mut request = bot
-        .send_message(ChatId(target_id), message)
-        .parse_mode(ParseMode::Html)
-        .disable_web_page_preview(true);
-    let thread_id = if job.log_message_id.is_some() {
-        job.log_message_thread_id
-    } else {
-        job.log_message_thread_id
-            .or(config.captcha_log_message_thread_id)
-    };
-    if let Some(thread_id) = thread_id {
-        request = request.message_thread_id(thread_id);
-    }
-    if let Some(message_id) = job.log_message_id {
-        request = request
-            .reply_to_message_id(MessageId(message_id))
-            .allow_sending_without_reply(true);
-    }
-    if let Err(err) = request.await {
-        log_system_level(
-            config,
-            LogLevel::Warn,
-            &format!("failed to send ban release log: {err}"),
-        );
-    }
-}
-
-fn format_log_timestamp(config: &Config, timestamp: i64) -> String {
-    match config.timezone.timestamp_opt(timestamp, 0) {
-        chrono::LocalResult::Single(value) => value.format("%Y-%m-%d %H:%M:%S %Z").to_string(),
-        _ => format!("invalid timestamp ({timestamp})"),
-    }
 }

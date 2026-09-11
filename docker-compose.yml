@@ -1,12 +1,13 @@
 services:
   telegram-buktikanbot:
-    image: ${BOT_IMAGE:-ghcr.io/banghasan/telegram-buktikanbot:1.9.3}
+    image: ${BOT_IMAGE:-ghcr.io/banghasan/telegram-buktikanbot:1.9.4}
     container_name: telegram-buktikanbot
     restart: unless-stopped
     environment:
       # Make sure BOT_TOKEN is set in your .env file or exported in your shell!
       # If missing, the container will exit immediately.
       BOT_TOKEN: ${BOT_TOKEN}
+      ADMIN_USER_IDS: ${ADMIN_USER_IDS:-}
       CAPTCHA_LEN: ${CAPTCHA_LEN:-6}
       CAPTCHA_TIMEOUT_SECONDS: ${CAPTCHA_TIMEOUT_SECONDS:-120}
       CAPTCHA_CAPTION_UPDATE_SECONDS: ${CAPTCHA_CAPTION_UPDATE_SECONDS:-10}

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::env;
 use std::error::Error;
 use std::net::{IpAddr, SocketAddr};
@@ -34,6 +35,7 @@ pub enum RunMode {
 #[derive(Clone, Debug)]
 pub struct Config {
     pub token: String,
+    pub admin_user_ids: HashSet<u64>,
     pub captcha_len: usize,
     pub captcha_timeout_secs: u64,
     pub captcha_caption_update_secs: u64,
@@ -67,6 +69,7 @@ impl Config {
         let token = env::var("BOT_TOKEN")
             .or_else(|_| env::var("TELOXIDE_TOKEN"))
             .map_err(|_| "BOT_TOKEN or TELOXIDE_TOKEN is required")?;
+        let admin_user_ids = parse_admin_user_ids(&mut warnings);
         let captcha_len = parse_env_usize("CAPTCHA_LEN", 6, 4, 12, &mut warnings);
         let captcha_timeout_secs =
             parse_env_u64("CAPTCHA_TIMEOUT_SECONDS", 120, 30, 600, &mut warnings);
@@ -148,6 +151,7 @@ impl Config {
 
         Ok(Self {
             token,
+            admin_user_ids,
             captcha_len,
             captcha_timeout_secs,
             captcha_caption_update_secs,
@@ -174,6 +178,10 @@ impl Config {
             webhook_listen_addr,
             webhook_secret_token,
         })
+    }
+
+    pub fn is_admin(&self, user_id: u64) -> bool {
+        self.admin_user_ids.contains(&user_id)
     }
 }
 
@@ -349,6 +357,30 @@ fn parse_env_positive_i32(name: &str, warnings: &mut Vec<String>) -> Option<i32>
     }
 }
 
+fn parse_admin_user_ids(warnings: &mut Vec<String>) -> HashSet<u64> {
+    let Some(raw) = env::var("ADMIN_USER_IDS").ok() else {
+        return HashSet::new();
+    };
+
+    let mut ids = HashSet::new();
+    for value in raw.split(',') {
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        match value.parse::<u64>() {
+            Ok(id) if id > 0 => {
+                ids.insert(id);
+            }
+            _ => warnings.push(format!(
+                "ADMIN_USER_IDS contains invalid user ID ('{}'), ignoring",
+                sanitize_log_text(value)
+            )),
+        }
+    }
+    ids
+}
+
 fn parse_webhook_listen_addr(warnings: &mut Vec<String>) -> SocketAddr {
     let addr = env::var("WEBHOOK_LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0".to_string());
     let port = env::var("WEBHOOK_PORT")
@@ -452,6 +484,34 @@ mod tests {
 
     fn base_required_env() -> Vec<(&'static str, &'static str)> {
         vec![("BOT_TOKEN", "test-token")]
+    }
+
+    #[test]
+    fn admin_user_ids_are_loaded_as_a_numeric_allowlist() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let mut vars = base_required_env();
+        vars.push(("ADMIN_USER_IDS", "12345, 67890,12345"));
+        let _guard = EnvGuard::set(&vars, &["RUN_MODE", "WEBHOOK_URL", "WEBHOOK_SECRET_TOKEN"]);
+        let cfg = Config::from_env().unwrap();
+        assert!(cfg.is_admin(12345));
+        assert!(cfg.is_admin(67890));
+        assert!(!cfg.is_admin(99999));
+        assert_eq!(cfg.admin_user_ids.len(), 2);
+    }
+
+    #[test]
+    fn invalid_admin_user_ids_are_ignored_with_a_warning() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let mut vars = base_required_env();
+        vars.push(("ADMIN_USER_IDS", "12345,nope,0"));
+        let _guard = EnvGuard::set(&vars, &["RUN_MODE", "WEBHOOK_URL", "WEBHOOK_SECRET_TOKEN"]);
+        let cfg = Config::from_env().unwrap();
+        assert_eq!(cfg.admin_user_ids.len(), 1);
+        assert!(
+            cfg.config_warnings
+                .iter()
+                .any(|warning| warning.contains("ADMIN_USER_IDS contains invalid user ID"))
+        );
     }
 
     #[test]
