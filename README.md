@@ -135,6 +135,9 @@ Catatan dependency dan warning future-incompatibility yang perlu dipantau ada di
 Detail desain dan isi laporan statistik admin tersedia di
 [docs/statistics.md](./docs/statistics.md).
 
+Kebijakan update dan review dependency tersedia di
+[docs/dependency-management.md](./docs/dependency-management.md).
+
 Jika ingin menjalankan mode webhook, lihat panduan lengkap di [`WEBHOOK.md`](./WEBHOOK.md).
 
 Catatan Docker: jika memakai image Docker, contoh env bisa ditemukan di

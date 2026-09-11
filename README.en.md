@@ -121,6 +121,9 @@ in [`docs/known-issues/`](./docs/known-issues/).
 The admin statistics design and report contents are documented in
 [`docs/statistics.md`](./docs/statistics.md).
 
+Dependency update and review policy is documented in
+[`docs/dependency-management.md`](./docs/dependency-management.md).
+
 For webhook mode, see [`WEBHOOK.md`](./WEBHOOK.md).
 
 Docker note: if you use the Docker image, the sample env file is located at
