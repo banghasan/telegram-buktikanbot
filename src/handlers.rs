@@ -9,10 +9,10 @@ use teloxide::types::{
     InlineKeyboardMarkup, InputFile, InputMedia, InputMediaPhoto, Message, ParseMode, UserId,
 };
 
-use crate::ban_release::BanReleaseStore;
+use crate::ban_release::{BanReleaseJob, BanReleaseStore};
 use crate::captcha::{
-    CaptchaCheck, SharedState, captcha_caption, check_captcha_answer, generate_captcha,
-    generate_captcha_options, make_pending_captcha,
+    CaptchaChatContext, CaptchaCheck, PendingCaptcha, SharedState, captcha_caption,
+    check_captcha_answer, generate_captcha, generate_captcha_options, make_pending_captcha,
 };
 use crate::config::{Config, LogLevel};
 use crate::logging::{
@@ -20,6 +20,38 @@ use crate::logging::{
     log_user_event_with_chat,
 };
 use crate::utils::{escape_html, sanitize_log_text};
+
+struct BanRequest {
+    chat_id: ChatId,
+    user_id: UserId,
+    chat_title: Option<String>,
+    chat_username: Option<String>,
+    user_name: String,
+    user_username: Option<String>,
+    ban_release_store: Option<Arc<BanReleaseStore>>,
+    error_context: &'static str,
+}
+
+impl BanRequest {
+    fn from_pending(
+        chat_id: ChatId,
+        user_id: UserId,
+        pending: &PendingCaptcha,
+        ban_release_store: Option<Arc<BanReleaseStore>>,
+        error_context: &'static str,
+    ) -> Self {
+        Self {
+            chat_id,
+            user_id,
+            chat_title: pending.chat_title.clone(),
+            chat_username: pending.chat_username.clone(),
+            user_name: pending.user_name.clone(),
+            user_username: pending.user_username.clone(),
+            ban_release_store,
+            error_context,
+        }
+    }
+}
 
 pub async fn on_new_members(
     bot: Bot,
@@ -39,12 +71,12 @@ pub async fn on_new_members(
     log_message(&config, &msg);
 
     let (chat_title, chat_username) = chat_context(&msg.chat);
+    let chat = CaptchaChatContext::new(chat_title, chat_username);
     for member in members {
         start_captcha_for_user(
             &bot,
             msg.chat.id,
-            chat_title.clone(),
-            chat_username.clone(),
+            chat.clone(),
             member.clone(),
             &state,
             &config,
@@ -93,11 +125,11 @@ pub async fn on_chat_member_updated(
 
     let user = update.new_chat_member.user;
     let (chat_title, chat_username) = chat_context(&update.chat);
+    let chat = CaptchaChatContext::new(chat_title, chat_username);
     start_captcha_for_user(
         &bot,
         update.chat.id,
-        chat_title,
-        chat_username,
+        chat,
         user,
         &state,
         &config,
@@ -110,8 +142,7 @@ pub async fn on_chat_member_updated(
 async fn start_captcha_for_user(
     bot: &Bot,
     chat_id: ChatId,
-    chat_title: Option<String>,
-    chat_username: Option<String>,
+    chat: CaptchaChatContext,
     user: teloxide::types::User,
     state: &SharedState,
     config: &Arc<Config>,
@@ -137,8 +168,8 @@ async fn start_captcha_for_user(
             config,
             LogLevel::Error,
             chat_id,
-            chat_title.as_deref(),
-            chat_username.as_deref(),
+            chat.title.as_deref(),
+            chat.username.as_deref(),
             "failed to restrict user",
             &err,
         );
@@ -172,8 +203,7 @@ async fn start_captcha_for_user(
         config.captcha_attempts,
         config.captcha_timeout_secs,
         &user,
-        chat_title.clone(),
-        chat_username.clone(),
+        &chat,
     );
 
     {
@@ -184,8 +214,8 @@ async fn start_captcha_for_user(
         config,
         &user,
         chat_id,
-        chat_title.as_deref(),
-        chat_username.as_deref(),
+        chat.title.as_deref(),
+        chat.username.as_deref(),
         "-> ⏳ captcha sent",
     );
 
@@ -248,14 +278,13 @@ async fn start_captcha_for_user(
             ban_user_and_maybe_release(
                 &bot_clone,
                 &config_clone,
-                chat_id,
-                user_id,
-                pending.chat_title.as_deref(),
-                pending.chat_username.as_deref(),
-                pending.user_name.clone(),
-                pending.user_username.clone(),
-                ban_release_store_clone.clone(),
-                "failed to ban user on timeout",
+                BanRequest::from_pending(
+                    chat_id,
+                    user_id,
+                    &pending,
+                    ban_release_store_clone.clone(),
+                    "failed to ban user on timeout",
+                ),
             )
             .await;
             if let Err(err) = bot_clone
@@ -519,14 +548,13 @@ pub async fn on_callback_query(
                         ban_user_and_maybe_release(
                             &bot,
                             &config,
-                            chat_id,
-                            from.id,
-                            pending.chat_title.as_deref(),
-                            pending.chat_username.as_deref(),
-                            pending.user_name.clone(),
-                            pending.user_username.clone(),
-                            ban_release_store.clone(),
-                            "failed to ban user on attempts exceeded",
+                            BanRequest::from_pending(
+                                chat_id,
+                                from.id,
+                                &pending,
+                                ban_release_store.clone(),
+                                "failed to ban user on attempts exceeded",
+                            ),
                         )
                         .await;
                         if let Err(err) = bot
@@ -679,25 +707,25 @@ async fn restore_chat_permissions(
     Ok(())
 }
 
-async fn ban_user_and_maybe_release(
-    bot: &Bot,
-    config: &Arc<Config>,
-    chat_id: ChatId,
-    user_id: UserId,
-    chat_title: Option<&str>,
-    chat_username: Option<&str>,
-    user_name: String,
-    user_username: Option<String>,
-    ban_release_store: Option<Arc<BanReleaseStore>>,
-    error_context: &str,
-) {
+async fn ban_user_and_maybe_release(bot: &Bot, config: &Arc<Config>, request: BanRequest) {
+    let BanRequest {
+        chat_id,
+        user_id,
+        chat_title,
+        chat_username,
+        user_name,
+        user_username,
+        ban_release_store,
+        error_context,
+    } = request;
+
     if let Err(err) = bot.ban_chat_member(chat_id, user_id).await {
         log_telegram_error(
             config,
             LogLevel::Error,
             chat_id,
-            chat_title,
-            chat_username,
+            chat_title.as_deref(),
+            chat_username.as_deref(),
             error_context,
             &err,
         );
@@ -717,25 +745,23 @@ async fn ban_user_and_maybe_release(
             config,
             LogLevel::Warn,
             chat_id,
-            chat_title,
-            chat_username,
+            chat_title.as_deref(),
+            chat_username.as_deref(),
             "failed to store ban release job (user id out of range)",
             &err,
         );
         return;
     };
-    let chat_title = chat_title.map(str::to_string);
-    let chat_username = chat_username.map(str::to_string);
     if let Err(err) = store
-        .upsert_job(
-            chat_id.0,
-            user_id_i64,
+        .upsert_job(BanReleaseJob {
+            chat_id: chat_id.0,
+            user_id: user_id_i64,
             release_at,
             user_name,
             user_username,
-            chat_title.clone(),
-            chat_username.clone(),
-        )
+            chat_title: chat_title.clone(),
+            chat_username: chat_username.clone(),
+        })
         .await
     {
         log_telegram_error(
@@ -785,7 +811,7 @@ fn option_to_display(input: &str) -> String {
             'A' | 'a' => {
                 if matches!(chars.peek(), Some('B') | Some('b')) {
                     chars.next();
-                    out.push_str("🆎");
+                    out.push('🆎');
                 } else {
                     out.push_str("🅰️");
                 }
@@ -885,12 +911,14 @@ async fn send_captcha_log_if_enabled(
     lines.push(format!(" └{}", result));
     let message = lines.join("\n");
 
-    if let Err(err) = bot
+    let mut request = bot
         .send_message(ChatId(target_id), message)
         .parse_mode(ParseMode::Html)
-        .disable_web_page_preview(true)
-        .await
-    {
+        .disable_web_page_preview(true);
+    if let Some(thread_id) = config.captcha_log_message_thread_id {
+        request = request.message_thread_id(thread_id);
+    }
+    if let Err(err) = request.await {
         log_telegram_error(
             config,
             LogLevel::Warn,

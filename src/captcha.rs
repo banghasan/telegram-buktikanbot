@@ -26,6 +26,18 @@ pub struct PendingCaptcha {
     pub chat_username: Option<String>,
 }
 
+#[derive(Clone, Debug)]
+pub struct CaptchaChatContext {
+    pub title: Option<String>,
+    pub username: Option<String>,
+}
+
+impl CaptchaChatContext {
+    pub fn new(title: Option<String>, username: Option<String>) -> Self {
+        Self { title, username }
+    }
+}
+
 pub type CaptchaKey = (ChatId, UserId);
 pub type SharedState = Arc<Mutex<HashMap<CaptchaKey, PendingCaptcha>>>;
 
@@ -128,8 +140,7 @@ pub fn make_pending_captcha(
     attempts_total: usize,
     remaining_secs: u64,
     user: &teloxide::types::User,
-    chat_title: Option<String>,
-    chat_username: Option<String>,
+    chat: &CaptchaChatContext,
 ) -> PendingCaptcha {
     PendingCaptcha {
         code,
@@ -141,8 +152,8 @@ pub fn make_pending_captcha(
         user_display: format_user_display(user),
         user_name: format_user_name(user),
         user_username: user.username.as_deref().map(|raw| raw.trim().to_string()),
-        chat_title,
-        chat_username,
+        chat_title: chat.title.clone(),
+        chat_username: chat.username.clone(),
     }
 }
 

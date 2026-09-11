@@ -38,7 +38,7 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let version_line = format!("(system) version: {}", env!("CARGO_PKG_VERSION"));
     let config_line = format!(
-        "(system) config: captcha_len={} timeout={}s update={}s size={}x{} options={} attempts={} option_digits_to_emoji={} delete_join_message={} delete_left_message={} ban_release_enabled={} ban_release_after_secs={} ban_release_db_path={} log_json={} log_level={} captcha_log_enabled={} captcha_log_chat_id={} timezone={} run_mode={}",
+        "(system) config: captcha_len={} timeout={}s update={}s size={}x{} options={} attempts={} option_digits_to_emoji={} delete_join_message={} delete_left_message={} ban_release_enabled={} ban_release_after_secs={} ban_release_db_path={} log_json={} log_level={} captcha_log_enabled={} captcha_log_chat_id={} captcha_log_message_thread_id={} timezone={} run_mode={}",
         config.captcha_len,
         config.captcha_timeout_secs,
         config.captcha_caption_update_secs,
@@ -57,6 +57,10 @@ async fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         config.captcha_log_enabled,
         config
             .captcha_log_chat_id
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "-".to_string()),
+        config
+            .captcha_log_message_thread_id
             .map(|id| id.to_string())
             .unwrap_or_else(|| "-".to_string()),
         config.timezone,
@@ -351,12 +355,14 @@ async fn send_ban_release_log_if_enabled(bot: &Bot, config: &Arc<Config>, job: &
     lines.push(" └👣 ban telah dilepas.".to_string());
     let message = lines.join("\n");
 
-    if let Err(err) = bot
+    let mut request = bot
         .send_message(ChatId(target_id), message)
         .parse_mode(ParseMode::Html)
-        .disable_web_page_preview(true)
-        .await
-    {
+        .disable_web_page_preview(true);
+    if let Some(thread_id) = config.captcha_log_message_thread_id {
+        request = request.message_thread_id(thread_id);
+    }
+    if let Err(err) = request.await {
         log_system_level(
             config,
             LogLevel::Warn,

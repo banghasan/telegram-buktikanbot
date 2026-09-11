@@ -25,10 +25,12 @@ pub fn log_message(config: &Config, msg: &Message) {
         LogLevel::Info,
         config.log_json,
         &ts,
-        msg.chat.id,
-        title.as_deref(),
-        chat_username.as_deref(),
-        Some(&user_context),
+        LogLineContext {
+            chat_id: msg.chat.id,
+            title: title.as_deref(),
+            chat_username: chat_username.as_deref(),
+            user_context: Some(&user_context),
+        },
         &content,
     );
 }
@@ -59,10 +61,12 @@ pub fn log_system_block(config: &Config, level: LogLevel, lines: &[String]) {
                 level,
                 config.log_json,
                 &ts,
-                "system",
-                None,
-                None,
-                Some("system"),
+                LogLineContext {
+                    chat_id: "system",
+                    title: None,
+                    chat_username: None,
+                    user_context: Some("system"),
+                },
                 &sanitize_log_text(line),
             );
         }
@@ -85,10 +89,12 @@ pub fn log_system_level(config: &Config, level: LogLevel, text: &str) {
         level,
         config.log_json,
         &ts,
-        "system",
-        None,
-        None,
-        Some("system"),
+        LogLineContext {
+            chat_id: "system",
+            title: None,
+            chat_username: None,
+            user_context: Some("system"),
+        },
         &sanitize_log_text(text),
     );
 }
@@ -111,10 +117,12 @@ pub fn log_user_event_with_chat(
         LogLevel::Info,
         config.log_json,
         &ts,
-        chat_id,
-        title,
-        chat_username,
-        Some(&user_context),
+        LogLineContext {
+            chat_id,
+            title,
+            chat_username,
+            user_context: Some(&user_context),
+        },
         &sanitize_log_text(text),
     );
 }
@@ -138,10 +146,12 @@ pub fn log_user_event_by_display(
         LogLevel::Info,
         config.log_json,
         &ts,
-        chat_id,
-        title,
-        chat_username,
-        Some(&user_context),
+        LogLineContext {
+            chat_id,
+            title,
+            chat_username,
+            user_context: Some(&user_context),
+        },
         &sanitize_log_text(text),
     );
 }
@@ -166,24 +176,36 @@ pub fn log_telegram_error(
         level,
         config.log_json,
         &ts,
-        chat_id,
-        title,
-        chat_username,
-        None,
+        LogLineContext {
+            chat_id,
+            title,
+            chat_username,
+            user_context: None,
+        },
         &message,
     );
+}
+
+struct LogLineContext<'a, T: std::fmt::Display> {
+    chat_id: T,
+    title: Option<&'a str>,
+    chat_username: Option<&'a str>,
+    user_context: Option<&'a str>,
 }
 
 fn log_line<T: std::fmt::Display>(
     level: LogLevel,
     log_json: bool,
     ts: &str,
-    chat_id: T,
-    title: Option<&str>,
-    chat_username: Option<&str>,
-    user_context: Option<&str>,
+    context: LogLineContext<'_, T>,
     message: &str,
 ) {
+    let LogLineContext {
+        chat_id,
+        title,
+        chat_username,
+        user_context,
+    } = context;
     if log_json {
         let payload = serde_json::json!({
             "ts": ts,

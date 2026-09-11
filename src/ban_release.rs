@@ -18,16 +18,7 @@ impl BanReleaseStore {
         Ok(store)
     }
 
-    pub async fn upsert_job(
-        &self,
-        chat_id: i64,
-        user_id: i64,
-        release_at: i64,
-        user_name: String,
-        user_username: Option<String>,
-        chat_title: Option<String>,
-        chat_username: Option<String>,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+    pub async fn upsert_job(&self, job: BanReleaseJob) -> Result<(), Box<dyn Error + Send + Sync>> {
         let path = self.db_path.clone();
         tokio::task::spawn_blocking(move || {
             let conn = open_db(&path)?;
@@ -42,13 +33,13 @@ impl BanReleaseStore {
                     chat_title=excluded.chat_title,
                     chat_username=excluded.chat_username",
                 params![
-                    chat_id,
-                    user_id,
-                    release_at,
-                    user_name,
-                    user_username,
-                    chat_title,
-                    chat_username
+                    job.chat_id,
+                    job.user_id,
+                    job.release_at,
+                    job.user_name,
+                    job.user_username,
+                    job.chat_title,
+                    job.chat_username
                 ],
             )?;
             Ok::<_, rusqlite::Error>(())

@@ -52,6 +52,7 @@ pub struct Config {
     pub log_level: LogLevel,
     pub captcha_log_enabled: bool,
     pub captcha_log_chat_id: Option<i64>,
+    pub captcha_log_message_thread_id: Option<i32>,
     pub timezone: Tz,
     pub config_warnings: Vec<String>,
     pub run_mode: RunMode,
@@ -105,6 +106,8 @@ impl Config {
             .unwrap_or(LogLevel::Info);
         let mut captcha_log_enabled = parse_env_bool("CAPTCHA_LOG_ENABLED", false, &mut warnings);
         let captcha_log_chat_id = parse_env_i64("CAPTCHA_LOG_CHAT_ID", &mut warnings);
+        let captcha_log_message_thread_id =
+            parse_env_positive_i32("CAPTCHA_LOG_MESSAGE_THREAD_ID", &mut warnings);
         let run_mode = match env::var("RUN_MODE").ok() {
             Some(raw) => parse_run_mode(&raw).ok_or_else(|| {
                 format!(
@@ -163,6 +166,7 @@ impl Config {
             log_level,
             captcha_log_enabled,
             captcha_log_chat_id,
+            captcha_log_message_thread_id,
             timezone,
             config_warnings: warnings,
             run_mode,
@@ -292,9 +296,7 @@ fn parse_env_bool(name: &str, default: bool, warnings: &mut Vec<String>) -> bool
 }
 
 fn parse_env_i64(name: &str, warnings: &mut Vec<String>) -> Option<i64> {
-    let Some(raw) = env::var(name).ok() else {
-        return None;
-    };
+    let raw = env::var(name).ok()?;
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         warnings.push(format!("{} empty, ignoring", name));
@@ -312,6 +314,33 @@ fn parse_env_i64(name: &str, warnings: &mut Vec<String>) -> Option<i64> {
         Err(_) => {
             warnings.push(format!(
                 "{} invalid ('{}'), ignoring",
+                name,
+                sanitize_log_text(&raw)
+            ));
+            None
+        }
+    }
+}
+
+fn parse_env_positive_i32(name: &str, warnings: &mut Vec<String>) -> Option<i32> {
+    let raw = env::var(name).ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        warnings.push(format!("{} empty, ignoring", name));
+        return None;
+    }
+    match trimmed.parse::<i32>() {
+        Ok(value) if value > 0 => Some(value),
+        Ok(value) => {
+            warnings.push(format!(
+                "{} invalid ({}), must be a positive integer; ignoring",
+                name, value
+            ));
+            None
+        }
+        Err(_) => {
+            warnings.push(format!(
+                "{} invalid ('{}'), must be a positive integer; ignoring",
                 name,
                 sanitize_log_text(&raw)
             ));
@@ -468,5 +497,38 @@ mod tests {
         let _guard = EnvGuard::set(&vars, &[]);
         let err = Config::from_env().unwrap_err().to_string();
         assert!(err.contains("WEBHOOK_SECRET_TOKEN has invalid characters"));
+    }
+
+    #[test]
+    fn captcha_log_message_thread_id_is_loaded() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let mut vars = base_required_env();
+        vars.extend([
+            ("CAPTCHA_LOG_ENABLED", "true"),
+            ("CAPTCHA_LOG_CHAT_ID", "-1001234567890"),
+            ("CAPTCHA_LOG_MESSAGE_THREAD_ID", "42"),
+        ]);
+        let _guard = EnvGuard::set(&vars, &["RUN_MODE", "WEBHOOK_URL", "WEBHOOK_SECRET_TOKEN"]);
+        let cfg = Config::from_env().unwrap();
+        assert_eq!(cfg.captcha_log_message_thread_id, Some(42));
+    }
+
+    #[test]
+    fn invalid_captcha_log_message_thread_id_is_ignored() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let mut vars = base_required_env();
+        vars.extend([
+            ("CAPTCHA_LOG_ENABLED", "true"),
+            ("CAPTCHA_LOG_CHAT_ID", "-1001234567890"),
+            ("CAPTCHA_LOG_MESSAGE_THREAD_ID", "0"),
+        ]);
+        let _guard = EnvGuard::set(&vars, &["RUN_MODE", "WEBHOOK_URL", "WEBHOOK_SECRET_TOKEN"]);
+        let cfg = Config::from_env().unwrap();
+        assert_eq!(cfg.captcha_log_message_thread_id, None);
+        assert!(
+            cfg.config_warnings
+                .iter()
+                .any(|warning| warning.contains("CAPTCHA_LOG_MESSAGE_THREAD_ID invalid"))
+        );
     }
 }
