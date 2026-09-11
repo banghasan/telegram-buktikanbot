@@ -5,9 +5,10 @@ use std::time::{Duration, Instant};
 use chrono::{Duration as ChronoDuration, TimeZone, Utc};
 use teloxide::prelude::*;
 use teloxide::types::{
-    CallbackQuery, ChatId, ChatMemberStatus, ChatMemberUpdated, ChatPermissions,
-    InlineKeyboardButton, InlineKeyboardMarkup, InputFile, InputMedia, InputMediaPhoto, Message,
-    MessageId, ParseMode, User, UserId,
+    CallbackQuery, CallbackQueryId, ChatId, ChatMemberStatus, ChatMemberUpdated, ChatPermissions,
+    InlineKeyboardButton, InlineKeyboardMarkup, InputFile, InputMedia, InputMediaPhoto,
+    LinkPreviewOptions, MaybeInaccessibleMessage, Message, MessageId, ParseMode, ReplyParameters,
+    ThreadId, User, UserId,
 };
 
 use crate::ban_release::{BanReleaseJob, BanReleaseStore};
@@ -691,7 +692,7 @@ pub async fn on_text(
     config: Arc<Config>,
     ban_release_store: Option<Arc<BanReleaseStore>>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let Some(user) = msg.from() else {
+    let Some(user) = msg.from.as_ref() else {
         return Ok(());
     };
     if user.is_bot {
@@ -810,7 +811,7 @@ pub async fn on_text(
             if let Err(err) = bot
                 .send_message(msg.chat.id, text)
                 .parse_mode(ParseMode::MarkdownV2)
-                .disable_web_page_preview(true)
+                .link_preview_options(no_link_preview())
                 .await
             {
                 let (chat_title, chat_username) = chat_context(&msg.chat);
@@ -854,13 +855,13 @@ async fn send_admin_pending_panel(
     if let Some(message_id) = message_id {
         bot.edit_message_text(chat_id, message_id, text)
             .parse_mode(ParseMode::Html)
-            .disable_web_page_preview(true)
+            .link_preview_options(no_link_preview())
             .reply_markup(keyboard)
             .await?;
     } else {
         bot.send_message(chat_id, text)
             .parse_mode(ParseMode::Html)
-            .disable_web_page_preview(true)
+            .link_preview_options(no_link_preview())
             .reply_markup(keyboard)
             .await?;
     }
@@ -1020,7 +1021,7 @@ pub async fn on_callback_query(
     if !data.starts_with("captcha:") {
         return Ok(());
     }
-    let Some(message) = message else {
+    let Some(message) = message.and_then(|message| message.regular_message().cloned()) else {
         return Ok(());
     };
     let chat_id = message.chat.id;
@@ -1426,10 +1427,10 @@ pub async fn on_callback_query(
 
 async fn on_admin_callback(
     bot: &Bot,
-    callback_id: String,
+    callback_id: CallbackQueryId,
     from: &User,
     data: &str,
-    message: Option<Message>,
+    message: Option<MaybeInaccessibleMessage>,
     config: &Arc<Config>,
     ban_release_store: Option<Arc<BanReleaseStore>>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -1442,7 +1443,7 @@ async fn on_admin_callback(
         return Ok(());
     }
 
-    let Some(message) = message else {
+    let Some(message) = message.and_then(|message| message.regular_message().cloned()) else {
         let _ = bot
             .answer_callback_query(callback_id)
             .text("⚠️ Panel admin sudah tidak tersedia.")
@@ -1492,7 +1493,7 @@ async fn on_admin_callback(
             render_admin_confirmation(config, &job),
         )
         .parse_mode(ParseMode::Html)
-        .disable_web_page_preview(true)
+        .link_preview_options(no_link_preview())
         .reply_markup(build_admin_confirmation_keyboard(&job, page))
         .await?;
         let _ = bot.answer_callback_query(callback_id).await;
@@ -1952,9 +1953,9 @@ async fn send_captcha_log_if_enabled(
     let mut request = bot
         .send_message(ChatId(target_id), message)
         .parse_mode(ParseMode::Html)
-        .disable_web_page_preview(true);
+        .link_preview_options(no_link_preview());
     if let Some(thread_id) = config.captcha_log_message_thread_id {
-        request = request.message_thread_id(thread_id);
+        request = request.message_thread_id(ThreadId(MessageId(thread_id)));
     }
     match request.await {
         Ok(message) => Some(CaptchaLogReference {
@@ -2048,7 +2049,7 @@ async fn send_ban_release_log_if_enabled(
     let mut request = bot
         .send_message(ChatId(target_id), message)
         .parse_mode(ParseMode::Html)
-        .disable_web_page_preview(true);
+        .link_preview_options(no_link_preview());
     let thread_id = if job.log_message_id.is_some() {
         job.log_message_thread_id
     } else {
@@ -2056,12 +2057,12 @@ async fn send_ban_release_log_if_enabled(
             .or(config.captcha_log_message_thread_id)
     };
     if let Some(thread_id) = thread_id {
-        request = request.message_thread_id(thread_id);
+        request = request.message_thread_id(ThreadId(MessageId(thread_id)));
     }
     if let Some(message_id) = job.log_message_id {
-        request = request
-            .reply_to_message_id(MessageId(message_id))
-            .allow_sending_without_reply(true);
+        request = request.reply_parameters(
+            ReplyParameters::new(MessageId(message_id)).allow_sending_without_reply(),
+        );
     }
     if let Err(err) = request.await {
         log_system_level(
@@ -2076,6 +2077,16 @@ fn format_log_timestamp(config: &Config, timestamp: i64) -> String {
     match config.timezone.timestamp_opt(timestamp, 0) {
         chrono::LocalResult::Single(value) => value.format("%Y-%m-%d %H:%M:%S %Z").to_string(),
         _ => format!("invalid timestamp ({timestamp})"),
+    }
+}
+
+fn no_link_preview() -> LinkPreviewOptions {
+    LinkPreviewOptions {
+        is_disabled: true,
+        url: None,
+        prefer_small_media: false,
+        prefer_large_media: false,
+        show_above_text: false,
     }
 }
 

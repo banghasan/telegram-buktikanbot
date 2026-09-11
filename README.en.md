@@ -114,6 +114,9 @@ record, the bot sends the release log as a regular message.
 The Rust toolchain is pinned to `1.98.1` through `rust-toolchain.toml` so local
 builds, CI, and releases use the same version.
 
+Dependency notes and future-incompatibility warnings to monitor are documented
+in [`docs/known-issues/`](./docs/known-issues/).
+
 For webhook mode, see [`WEBHOOK.md`](./WEBHOOK.md).
 
 Docker note: if you use the Docker image, the sample env file is located at

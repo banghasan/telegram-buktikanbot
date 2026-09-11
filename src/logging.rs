@@ -13,7 +13,7 @@ pub fn log_message(config: &Config, msg: &Message) {
     if !log_enabled_at(config, LogLevel::Info) {
         return;
     }
-    let Some(user) = msg.from() else {
+    let Some(user) = msg.from.as_ref() else {
         return;
     };
     let tz_now = now_in_timezone(config.timezone);

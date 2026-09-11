@@ -128,6 +128,9 @@ atau merupakan data lama, bot mengirim log pelepasan sebagai pesan biasa.
 Toolchain Rust dikunci pada versi `1.98.1` melalui `rust-toolchain.toml` agar
 build lokal, CI, dan release menggunakan versi yang konsisten.
 
+Catatan dependency dan warning future-incompatibility yang perlu dipantau ada di
+[`docs/known-issues/`](./docs/known-issues/).
+
 Jika ingin menjalankan mode webhook, lihat panduan lengkap di [`WEBHOOK.md`](./WEBHOOK.md).
 
 Catatan Docker: jika memakai image Docker, contoh env bisa ditemukan di

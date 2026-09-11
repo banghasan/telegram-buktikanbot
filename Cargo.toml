@@ -1,11 +1,11 @@
 [package]
 name = "telegram-buktikanbot"
-version = "1.9.4"
+version = "1.10.0"
 edition = "2024"
 rust-version = "1.98.1"
 
 [dependencies]
-teloxide = { version = "0.12", default-features = false, features = ["macros", "rustls", "webhooks-axum"] }
+teloxide = { version = "0.17.0", default-features = false, features = ["macros", "rustls", "webhooks-axum"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal"] }
 dotenvy = "0.15"
